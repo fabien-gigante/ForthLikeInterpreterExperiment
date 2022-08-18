@@ -1,4 +1,3 @@
-from pickle import FALSE
 from typing import Iterable, Optional, Union, List, Mapping, Type
 import os
 import colorama
@@ -6,19 +5,22 @@ from colorama import Fore as fg
 
 
 class Error(Exception):
-    ''' Applicative error '''
+    ''' Applicative Error. Rendered in red. '''
     def __init__(self, msg) -> None:
         super().__init__(f'{fg.RED}ERROR:{fg.RESET} {msg}')
 
 class Atom:
+    ''' Abstract. Smallest element of language. '''
     def execute(self, runtime: 'Runtime') -> None:
         raise Error(f'atom {self} cannot be executed')
 
 class Token(Atom):
+    ''' Abstract. A Token is an Atom with a value. '''
     def __init__(self, value: Union[int,float,str]) -> None:
         self.value = value
 
 class Literal(Token):
+    ''' Atomic int, float or string literal value. '''
     def __str__(self) -> str:
         if isinstance(self.value, str):
             return f"{fg.CYAN}'{self.value}'{fg.RESET}"
@@ -29,6 +31,7 @@ class Literal(Token):
         runtime.push(self)
 
 class Comment(Token):
+    ''' A piece of comment string. '''
     def __str__(self) -> str:
         return f'{fg.GREEN}({self.value}){fg.RESET}'
 
@@ -36,17 +39,49 @@ class Comment(Token):
         pass
 
 class Keyword(Token):
+    ''' Intermediate output of the Tokenizer. Not a language element. '''
     def __str__(self) -> str:
         return f'{fg.MAGENTA}<{self.value}>{fg.RESET}'
 
 class Quote(Token):
+    ''' A reference to a word by its name. '''
     def __str__(self) -> str:
         return f'{fg.YELLOW}`{self.value}`{fg.RESET}'
     def execute(self, runtime: 'Runtime') -> None:
         runtime.push(self)
 
+class Word(Token):
+    ''' Fundamental runtime executable token. '''
+    def __str__(self) -> str:
+        return f'{fg.YELLOW}{self.value}{fg.RESET}'
+    def execute(self, runtime: 'Runtime') -> None:
+        runtime.execute(self.value)
+
+class Sequence(Atom):
+    ''' List of atoms. '''
+    def __init__(self, content: Iterable[Atom]):
+        super().__init__()
+        self.content = [*content]
+    def __str__(self) -> str:
+        return '{ ' + ' '.join( f'{atom}' for atom in self.content ) + ' }'
+    def execute(self, runtime: 'Runtime') -> None:
+        runtime.push(self)
+
+class Intrinsic(Token):
+    ''' Intrinsic implementation of a word. '''
+    all = []
+    def __init_subclass__(cls) -> None: Intrinsic.all.append(cls)
+    def register(self, runtime: 'Runtime'): 
+        runtime.register(self.value, [self])
+    def __str__(self) -> str:
+        return f'{fg.LIGHTBLACK_EX}intrinsic<{type(self).__name__}>{fg.RESET}'
+
 class Tokenizer:
-    ''' Syntaxical analysis : turns a string into a series of tokens '''
+    ''' 
+    Syntaxical tokenizer. 
+    Turns a string into a series of tokens. 
+    Can only produce Litteral, Comment, Quote or Keyword.
+    '''
 
     def __init__(self, input: str) -> None:
         self.input = input
@@ -88,7 +123,12 @@ class Tokenizer:
                 except: yield Keyword(token.lower())
 
 class Parser:
-    ''' Gramatical analysis : parses a series of tokens, resolves keywords into words or sequences '''
+    ''' 
+    Gramatical parser. 
+    Parses a string or a series of tokens. 
+    Resolves any Keyword into Word or Sequence. 
+    Can therefore only produce Litteral, Comment, Quote or Word or Sequence.
+    '''
 
     def parse(self, input: str) -> Iterable[Atom]:
         self.input = Tokenizer(input).tokenize()
@@ -102,6 +142,9 @@ class Parser:
             if isinstance(token, Keyword) and token.value == closure: break
             yield from self.parse_one(token)
 
+    def is_valid_word(self, word: str) -> bool:
+        return not any(Tokenizer.is_separator(ch) for ch in word)
+
     def parse_one(self, token: Token) -> Iterable[Atom]:
         if not isinstance(token, Keyword): 
             yield token ; return
@@ -110,11 +153,12 @@ class Parser:
         elif token.value == ':': 
             word = next(self.input, None)
             if word is None: raise Error(f'missing word in definition')
-            if not isinstance(word, Keyword): raise Error(f'invalid word in definition')
+            if not isinstance(word, Keyword) or not self.is_valid_word(word.value):
+               raise Error(f'invalid word in definition')
             yield Sequence(self.parse_many(';'))
             yield Quote(word.value)
             yield Word('def')
-        elif any(Tokenizer.is_separator(ch) for ch in token.value):
+        elif not self.is_valid_word(token.value):
             raise Error(f'invalid character in word {token.value}')
         else: yield Word(token.value)
 
@@ -123,6 +167,11 @@ class Parser:
         for atom in atoms: atom.execute(runtime)
 
 class Runtime:
+    '''
+    Runtime environement for execution.
+    Holds and manages the list of available words and the stack.
+    '''
+
     def __init__(self) -> None:
         self.words: Mapping(str, List[Atom]) = {}
         self.stack: List[Atom] = []
@@ -146,9 +195,8 @@ class Runtime:
         self.stack.append(atom)
 
     def is_intrinsic(self, word: str) -> bool:
-        if len(self.words[word]) != 1: return False
-        intrinsic = self.words[word][0]
-        return isinstance(self.words[word][0], Intrinsic) and intrinsic.value == word
+        if not word in self.words: return False
+        return all(isinstance(atom, Intrinsic) for atom in self.words[word])
 
     def register(self, word: str, definition: List[Atom]) -> None:
         self.words[word] = [*definition]
@@ -160,25 +208,9 @@ class Runtime:
     def describe(self, word: str) -> str:
         return ' '.join( f'{atom}' for atom in self.words[word] )
 
-class Word(Token):
-    def __str__(self) -> str:
-        return f'{fg.YELLOW}{self.value}{fg.RESET}'
-    def execute(self, runtime: 'Runtime') -> None:
-        runtime.execute(self.value)
-
-class Sequence(Atom):
-    def __init__(self, content: Iterable[Atom]):
-        super().__init__()
-        self.content = [*content]
-    def __str__(self) -> str:
-        return '{ ' + ' '.join( f'{atom}' for atom in self.content ) + ' }'
-    def execute(self, runtime: 'Runtime') -> None:
-        runtime.push(self)
-
-class Intrinsic(Token):
-    def register(self, runtime: Runtime) : runtime.register(self.value, [self])
-    def __str__(self) -> str:
-        return f'{fg.LIGHTBLACK_EX}intrinsic<{type(self).__name__}>{fg.RESET}'
+'''
+    All intrinsic implementations
+'''
 
 class Print(Intrinsic):
     def __init__(self): super().__init__('.')
@@ -188,7 +220,7 @@ class Print(Intrinsic):
 class PrintWords(Intrinsic):
     def __init__(self): super().__init__('.w')
     def execute(self, runtime: Runtime) -> None:
-        for key in runtime.words.keys():
+        for key in sorted(runtime.words.keys()):
             print(f'  : {fg.YELLOW}{key}{fg.RESET} {runtime.describe(key)} ;')
 
 class PrintStack(Intrinsic):
@@ -210,17 +242,84 @@ class Define(Intrinsic):
            raise Error(f'cannot redefine intrinsic {word}')
         runtime.register(word, definition.content)
 
+class Add(Intrinsic):
+    def __init__(self): super().__init__('+')
+    def execute(self, runtime: Runtime) -> None:
+        arg2, arg1 = runtime.args([None, None])
+        if isinstance(arg1, Literal) and isinstance(arg2, Literal):
+            runtime.push(Literal(arg1.value + arg2.value))
+        elif isinstance(arg1, Sequence) and isinstance(arg2, Sequence):
+            runtime.push(Sequence([*arg1.content, *arg2.content]))
+        else: raise Error(f'Invalid argument types for {self.value}');
+
+class Substract(Intrinsic):
+    def __init__(self): super().__init__('-')
+    def execute(self, runtime: Runtime) -> None:
+        arg2, arg1 = runtime.args([Literal, Literal])
+        runtime.push(Literal(arg1.value - arg2.value))
+
+class Multiply(Intrinsic):
+    def __init__(self): super().__init__('*')
+    def execute(self, runtime: Runtime) -> None:
+        arg2, arg1 = runtime.args([None, None])
+        if isinstance(arg1, Literal) and isinstance(arg2, Literal):
+            runtime.push(Literal(arg1.value * arg2.value))
+        elif isinstance(arg1, Sequence) and isinstance(arg2, Literal) and isinstance(arg2.value, int):
+            runtime.push(Sequence(arg1.content * arg2.value))
+        elif isinstance(arg2, Sequence) and isinstance(arg1, Literal) and isinstance(arg1.value, int):
+            runtime.push(Sequence(arg1.value * arg2.content))
+        else: raise Error(f'Invalid argument types for {self.value}');
+
+class Divide(Intrinsic):
+    def __init__(self): super().__init__('/')
+    def execute(self, runtime: Runtime) -> None:
+        arg2, arg1 = runtime.args([Literal, Literal])
+        runtime.push(Literal(arg1.value / arg2.value))
+
+class Clear(Intrinsic):
+    def __init__(self): super().__init__('clear')
+    def execute(self, runtime: Runtime) -> None:
+        runtime.stack = []
+
+class Depth(Intrinsic):
+    def __init__(self): super().__init__('depth')
+    def execute(self, runtime: Runtime) -> None:
+        runtime.push(Literal(len(runtime.stack)))
+
+class Evaluate(Intrinsic):
+    def __init__(self): super().__init__('!')
+    def execute(self, runtime: Runtime) -> None:
+        arg = runtime.pop()
+        if isinstance(arg, Quote):
+            runtime.execute(arg.value)
+        elif isinstance(arg, Sequence):
+            for atom in arg.content: atom.execute(runtime)
+        else: arg.execute(runtime)
+
+class Prepend(Intrinsic):
+    def __init__(self): super().__init__('<+')
+    def execute(self, runtime: Runtime) -> None:
+        seq, atom = runtime.args([Sequence, None])
+        runtime.push( Sequence([atom, *seq.content]) )
+
+class Postpend(Intrinsic):
+    def __init__(self): super().__init__('+>')
+    def execute(self, runtime: Runtime) -> None:
+        seq, atom = runtime.args([Sequence, None])
+        runtime.push( Sequence([*seq.content, atom]) )
+
+# Interpreter main loop
 def main() -> None:
-    os.system('')
-    colorama.init(convert=True, strip=False)
+    os.system('') ; colorama.init(convert = True, strip = False)
     prompt = fg.LIGHTWHITE_EX + '> ' + fg.RESET
     showstack = True
 
     runtime = Runtime()
-    for intrinsic in [Define, Print, PrintStack, PrintWords]:
-        intrinsic().register(runtime)
+    for intrinsic in Intrinsic.all: intrinsic().register(runtime)
 
     parser = Parser()
+    parser.execute(runtime, ':print ( alias ) .; :eval ( alias ) !; :stack ( alias ) .s; :words ( alias ) .w; :prepend ( alias ) <+; :postpend ( alias ) +>;')
+
     while True:
         if showstack: parser.execute(runtime, '.s')
         try:
@@ -230,61 +329,11 @@ def main() -> None:
         #except Exception as e:
         #    print(e)
 
-main()
+# Main function calling
+if __name__ == '__main__':
+    main()
 
 '''
-
-class ArithmeticOp(Word):
-    def compute(self, value1, value2):
-        if self.name == '+':
-            return value1 + value2
-        if self.name == '-':
-            return value1 - value2
-        if self.name == '*':
-            return value1 * value2
-        if self.name == '/':
-            return value1 / value2
-        return None
-
-    def concat(self, arg1, arg2):
-        if isinstance(arg1, Container) and isinstance(arg2, Container):
-            return Container(self.runtime, None, arg1.content + arg2.content)
-        return None
-
-    def copies(self, arg1, arg2):
-        if isinstance(arg1, Container) and Literal.is_literal(arg2, int):
-            return Container(self.runtime, None, arg1.content * arg2.value)
-        return None
-
-    def exec(self) -> None:
-        result = None
-        (arg2, arg1) = self.runtime.args([None, None])
-        if isinstance(arg1, Literal) and isinstance(arg2, Literal):
-            result = Literal(self.runtime, self.compute(arg1.value, arg2.value))
-        if isinstance(arg1, Container) or isinstance(arg2, Container):
-            if self.name == '+':
-                result = self.concat(arg1, arg2)
-            elif self.name == '*':
-                result = self.copies(arg1, arg2)
-        if result is None:
-            raise Error(f'Invalid arguments for operator {self.name} {arg1} {arg2}')
-        self.runtime.push(result)
-
-
-class Prepend(Word):
-    def exec(self) -> None:
-        result = None
-        (arg2, arg1) = self.runtime.args([Container, None])
-        result = Container(self.runtime, None, [Boxed(arg1)] + arg2.content)
-        self.runtime.push(result)
-
-
-class Postpend(Word):
-    def exec(self) -> None:
-        result = None
-        (arg2, arg1) = self.runtime.args([Container, None])
-        result = Container(self.runtime, None, arg2.content + [Boxed(arg1)])
-        self.runtime.push(result)
 
 class IfStatement(Enclosed):
     def parse(self, input: Iterable[Token]) -> Token:
@@ -317,11 +366,6 @@ class IfStatement(Enclosed):
             )
 
 
-class Eval(Word):
-    def exec(self) -> None:
-        self.runtime.pop().exec()
-
-
 class EvalIf(Word):
     def exec(self) -> None:
         cond, statement = self.runtime.args([Literal, None])
@@ -332,9 +376,5 @@ class Reverse(Word):
     def exec(self) -> None:
         container = self.runtime.pop(Container)
         self.runtime.push(Container(self.runtime, None, [*reversed(container.content)]))
-
-class Depth(Word):
-    def exec(self) -> None:
-        self.runtime.push(Literal(self.runtime, len(self.runtime.stack)))
 
 '''
