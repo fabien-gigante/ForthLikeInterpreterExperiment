@@ -1,0 +1,8 @@
+[tool.black]
+line-length = 100
+target-version = ['py39']
+skip-string-normalization = true
+preview = true
+
+[tool.pyright]
+extraPaths = ["C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\Python39_64\\Lib"]
