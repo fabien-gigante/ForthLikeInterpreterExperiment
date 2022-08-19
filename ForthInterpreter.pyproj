@@ -4,7 +4,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>2d6fd718-c038-496e-b811-f4640b0e789b</ProjectGuid>
     <ProjectHome>.</ProjectHome>
-    <StartupFile>ForthInterpreter.py</StartupFile>
+    <StartupFile>forth_interpreter.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
@@ -22,7 +22,7 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="ForthInterpreter.py" />
+    <Compile Include="forth_interpreter.py" />
   </ItemGroup>
   <ItemGroup>
     <InterpreterReference Include="Global|PythonCore|3.9" />
