@@ -1,6 +1,8 @@
 from abc import abstractclassmethod
+from asyncio.format_helpers import _format_args_and_kwargs
 from dis import Instruction
 from multiprocessing import Value
+from pickle import FALSE
 from typing import Iterable, Optional, Union, List, Mapping, Type, NoReturn
 import os
 import colorama
@@ -132,11 +134,17 @@ class Pattern:
     '''
     all = []
     def __init_subclass__(cls) -> None: Pattern.all.append(cls)
-    def __init__(self, prefix: str, suffix: str):
-        self.prefix = prefix ; self.suffix = suffix
+    def __init__(self, prefix: str, suffix: str, middle: Optional[str] = None) -> None:
+        self.prefix = prefix ; self.suffix = suffix ; self.middle = middle
     @abstractclassmethod
     def parse(self, parser: 'Parser') -> Iterable[Token]:
         pass
+    def __str__(self) -> str:
+        if self.middle is None:
+            return f'{self.prefix}{fg.LIGHTBLACK_EX} .. {fg.RESET}{self.suffix}'
+        else:
+            return f'{self.prefix}{fg.LIGHTBLACK_EX} .. {fg.RESET}{self.middle}{fg.LIGHTBLACK_EX} .. {fg.RESET}{self.suffix}'
+
 
 class Parser:
     ''' 
@@ -159,16 +167,23 @@ class Parser:
     def next(self) -> Optional[Token]:
         return next(self.input, None)
 
-    def parse_many(self, closure: Optional[str] = None) -> Iterable[Atom]:
+    def parse_many(self, closure: Optional[str] = None, ignore: List[str] = []) -> Iterable[Atom]:
         while True:
             token = self.next()
             if token is None and closure is None: break
             if token is None: raise Error(f'missing closing {closure}')
             if isinstance(token, Keyword) and token.value == closure: break
-            yield from self.parse_token(token)
+            if isinstance(token, Keyword) and token.value in ignore: yield token
+            else: yield from self.parse_token(token)
+
+    def reserved_patterns(self) -> Iterable[str]:
+        for p in self.patterns.values():
+           yield from (p.prefix, p.suffix, p.middle)
 
     def is_valid_word(self, word: str) -> bool:
-        return not any(Tokenizer.is_separator(ch) for ch in word)
+        if any(Tokenizer.is_separator(ch) for ch in word): return False
+        if word in self.reserved_patterns(): return False
+        return True
 
     def parse_token(self, token: Token) -> Iterable[Atom]:
         if not isinstance(token, Keyword): 
@@ -204,25 +219,18 @@ class PatternDefine(Pattern):
 class PatternIf(Pattern):
     ''' Pattern if ... else ... then used to define conditional logic. '''
     def __init__(self) :
-       super().__init__('if', 'then')
-       self.else_keyword = 'else'
+       super().__init__('if', 'then', 'else')
     def parse(self, parser: Parser) -> Iterable[Token]:
-        then_content = [*parser.parse_many(self.suffix)]
+        then_content = [*parser.parse_many(self.suffix, [self.middle])]
         else_content = None
         for i in range(len(then_content)):
-            if isinstance(then_content[i], Keyword) and then_content[i].value == self.else_keyword:
+            if isinstance(then_content[i], Keyword) and then_content[i].value == self.middle:
                 (then_content, else_content) = (then_content[:i], then_content[i+1:])
                 break
         if else_content is None:
-            yield Sequence(then_content)
-            yield Word('swap')
-            yield Word('?!')
+            yield from (Sequence(then_content), Word('swap'), Word('?!'))
         else:
-            yield Sequence(then_content)
-            yield Sequence(else_content)
-            yield Word('rot')
-            yield Word('?ifelse')
-
+            yield from (Sequence(then_content), Sequence(else_content), Word('rot'), Word('?ifelse'))
 
 class Runtime:
     '''
@@ -276,9 +284,11 @@ class Print(Intrinsic):
     def execute(self, runtime: Runtime) -> None:
         print(f'  = {runtime.pop()}')
 
-class PrintWords(Intrinsic):
+class Help(Intrinsic):
     def __init__(self): super().__init__('.w')
     def execute(self, runtime: Runtime) -> None:
+        for pattern in Pattern.all:
+            print(f'  {pattern()}\r\t\t\t{fg.LIGHTBLACK_EX}pattern<{pattern.__name__}>{fg.RESET}')
         for key in sorted(runtime.words.keys()):
             print(f'  : {fg.YELLOW}{key}{fg.RESET}\r\t\t{runtime.describe(key)} ;')
 
@@ -415,6 +425,17 @@ class Bye(Intrinsic):
     def execute(self, runtime: Runtime) -> None:
         runtime.halted = True
 
+# TODO ?
+#
+#class Reverse(Word):
+#    def exec(self) -> None:
+#        container = self.runtime.pop(Container)
+#        self.runtime.push(Container(self.runtime, None, [*reversed(container.content)]))
+#
+#     Input
+#
+
+
 class Interpreter:
     ''' The interpreter program '''
 
@@ -445,6 +466,8 @@ class Interpreter:
         ':nip (a b -- b) swap drop;',
         ':tuck (a b -- b a b) dup -rot;',
         ':over (a b -- a b a) swap tuck;',
+        ':?ifelse (a b c -- a ! | b !) `swap` swap ?! swap drop !;',
+        ':factorial (a -- a!)  dup {dup 1 - factorial *} {drop 1} rot ?ifelse;',
     ]
 
     def loop(self) -> None:
@@ -461,41 +484,3 @@ class Interpreter:
 if __name__ == '__main__':
     Interpreter().loop()
 
-'''
-
-class IfStatement(Enclosed):
-    def parse(self, input: Iterable[Token]) -> Token:
-        then_content = [*self.parse_many(input, self.closure)]
-        else_content = None
-        for i in range(len(then_content)):
-            if isinstance(then_content[i], Word) and then_content[i].name == 'else':
-                (then_content, else_content) = (then_content[:i], then_content[i+1:])
-                break
-        if else_content is None:
-            return Container(
-                self.runtime,
-                None,
-                [
-                    Boxed(Container(self.runtime,None,then_content)),
-                    self.runtime.dic['swap'],
-                    self.runtime.dic['?!'],
-                ],
-            )
-        else:
-            return Container(
-                self.runtime,
-                None,
-                [
-                    Boxed(Container(self.runtime,None,then_content)),
-                    Boxed(Container(self.runtime,None,else_content)),
-                    self.runtime.dic['rot'],
-                    self.runtime.dic['?ifel'],
-                ],
-            )
-
-class Reverse(Word):
-    def exec(self) -> None:
-        container = self.runtime.pop(Container)
-        self.runtime.push(Container(self.runtime, None, [*reversed(container.content)]))
-
-'''
