@@ -201,6 +201,29 @@ class PatternDefine(Pattern):
         yield Quote(word.value)
         yield Word('def')
 
+class PatternIf(Pattern):
+    ''' Pattern if ... else ... then used to define conditional logic. '''
+    def __init__(self) :
+       super().__init__('if', 'then')
+       self.else_keyword = 'else'
+    def parse(self, parser: Parser) -> Iterable[Token]:
+        then_content = [*parser.parse_many(self.suffix)]
+        else_content = None
+        for i in range(len(then_content)):
+            if isinstance(then_content[i], Keyword) and then_content[i].value == self.else_keyword:
+                (then_content, else_content) = (then_content[:i], then_content[i+1:])
+                break
+        if else_content is None:
+            yield Sequence(then_content)
+            yield Word('swap')
+            yield Word('?!')
+        else:
+            yield Sequence(then_content)
+            yield Sequence(else_content)
+            yield Word('rot')
+            yield Word('?ifelse')
+
+
 class Runtime:
     '''
     Runtime environement for execution.
