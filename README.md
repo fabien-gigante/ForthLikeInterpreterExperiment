@@ -1,6 +1,6 @@
 # Forth Like Interpreter Experiment
 
-A toy interpreter for my own take on the Forth langugage.  
+A toy interpreter for my own flavor of he Forth language.  
 For learning, education, and experimentation purposes only.
 
 ## Forth language reference
