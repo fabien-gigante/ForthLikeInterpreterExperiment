@@ -1,3 +1,5 @@
+''' FOLIE : FOrth-Like Interpreter Experiment '''
+
 from typing import Dict, Iterable, Optional, Tuple, Union, List, Type
 import os
 import colorama
@@ -85,7 +87,7 @@ class Intrinsic(Atom):
     def __str__(self) -> str:
         return f'{fg.LIGHTBLACK_EX}intrinsic<{type(self).__name__}>{fg.RESET}'
 
-# Token are output of the Tokenizer
+# Token are outputs of the Tokenizer
 Token = Union[ Literal, Comment, Keyword ]
 
 class Tokenizer:
@@ -99,7 +101,7 @@ class Tokenizer:
 
     @staticmethod
     def is_separator(c: str) -> bool:
-        return c.isspace() or c in (':', ';', '{', '}', "'", '"', '(', ')', '`')
+        return c.isspace() or c in (':', ';', '{', '}', "'", '"', '(', ')')
 
     @staticmethod
     def is_number(s: str) -> bool:
