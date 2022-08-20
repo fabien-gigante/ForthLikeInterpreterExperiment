@@ -5,7 +5,7 @@ For learning, education, and experimentation purposes only.
 
 ## Languages references
 
-Forth tutorial : https://www.forth.com/starting-forth/
+Forth tutorial : https://www.forth.com/starting-fort  
 HP RPL : https://en.m.wikipedia.org/wiki/RPL_(programming_language)
 
 ## The experiment
