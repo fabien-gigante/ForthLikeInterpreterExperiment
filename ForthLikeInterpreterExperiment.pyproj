@@ -3,13 +3,14 @@
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>2d6fd718-c038-496e-b811-f4640b0e789b</ProjectGuid>
-    <ProjectHome>.</ProjectHome>
-    <StartupFile>forth_interpreter.py</StartupFile>
+    <ProjectHome>
+    </ProjectHome>
+    <StartupFile>folie.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>.</OutputPath>
-    <Name>ForthInterpreter</Name>
+    <Name>ForthLikeInterpreterExperiment</Name>
     <RootNamespace>ForthInterpreter</RootNamespace>
     <InterpreterId>Global|PythonCore|3.9</InterpreterId>
   </PropertyGroup>
@@ -22,7 +23,7 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="forth_interpreter.py" />
+    <Compile Include="folie.py" />
   </ItemGroup>
   <ItemGroup>
     <InterpreterReference Include="Global|PythonCore|3.9" />

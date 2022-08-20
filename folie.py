@@ -45,7 +45,7 @@ class Comment(Atom):
     def execute(self, runtime: 'Runtime') -> None: pass
 
 class Keyword(Atom):
-    ''' Intermediate output of the Tokenizer. Not a language element. '''
+    ''' Intermediate output of the Tokenizer. Not a proper language element. '''
     def __init__(self, value: str) -> None:
         self.value = value
     def __str__(self) -> str:
@@ -85,12 +85,12 @@ class Intrinsic(Atom):
     def __str__(self) -> str:
         return f'{fg.LIGHTBLACK_EX}intrinsic<{type(self).__name__}>{fg.RESET}'
 
+# Token are output of the Tokenizer
 Token = Union[ Literal, Comment, Keyword ]
 
 class Tokenizer:
     '''
-    Syntaxical tokenizer.
-    Turns a string into a series of tokens.
+    Syntaxical tokenizer. Turns a string into a series of tokens.
     Can only produce Literal, Comment, Keyword.
     '''
 
@@ -145,7 +145,7 @@ class Tokenizer:
 class Pattern:
     '''
     Abstract. A pattern is a known sequence of token / keywords that can be handled by the parser.
-    It has the form : prefix ... [middle] ... suffix. Parsing implementation is provided in Pattern sub classes.
+    It has the form : prefix ... suffix. Parsing implementation is provided in Pattern sub classes.
     '''
     classes : List[Type['Pattern']] = []
     def __init_subclass__(cls) -> None: Pattern.classes.append(cls)
@@ -217,7 +217,9 @@ class Parser:
 
     def execute(self, runtime: 'Runtime', input_str: str) -> None:
         atoms = [*self.parse(input_str)]
-        for atom in atoms: atom.execute(runtime)
+        for atom in atoms:
+            atom.execute(runtime)
+            if runtime.interrupted: break
 
 class SequencePattern(Pattern):
     ''' Pattern { ... } used to define a sequence. '''
@@ -234,7 +236,7 @@ class DefinePattern(Pattern):
         if not isinstance(word, Keyword): raise Error(f'invalid word type {word}')
         parser.check_valid_word(word.value)
         yield Sequence(parser.parse_many((self.suffix,)))
-        yield Sequence([Word(word.value)]) # TODO : StringLiteral ?
+        yield Sequence([Word(word.value)])
         yield Word('def')
 
 class IfPattern(Pattern):
@@ -251,28 +253,37 @@ class IfPattern(Pattern):
         if else_cont is None:
             yield from (Sequence(then_cont), Word('swap'), Word('?if'))
         else:
+            if any(isinstance(atom, Keyword) for atom in else_cont):
+                raise Error('A single else keyword is allowed in an if statement')
             yield from (Sequence(then_cont), Sequence(else_cont), Word('rot'), Word('?ifelse'))
     def reserved(self) -> Iterable[str]:
         yield from super().reserved()
         yield 'else'
     def __str__(self) -> str:
-        return f'{self.prefix}{fg.LIGHTBLACK_EX} .. {fg.RESET}[ else {fg.LIGHTBLACK_EX} .. {fg.RESET}] {self.suffix}'
+        return f'{self.prefix}{fg.LIGHTBLACK_EX} .. {fg.RESET}[else {fg.LIGHTBLACK_EX}..{fg.RESET}] {self.suffix}'
 
 class BeginPattern(Pattern):
     ''' Pattern begin ... again, for forever loops. '''
     def __init__(self) :
         super().__init__('begin', 'again')
     def parse(self, parser: Parser) -> Iterable[Atom]:
-        content = [*parser.parse_many((self.suffix, 'until', 'while'))]
-        if parser.closure == 'until': content += [ Word('?leave') ]
-        elif parser.closure == 'while': content += [ Word('not'), Word('?leave') ]
+        content = [*parser.parse_many((self.suffix, 'until', 'repeat'), ('while',))]
+        if parser.closure == 'until': 
+            content += [ Word('?leave') ]
+        else:
+            for i, atom in enumerate(content):
+                if isinstance(atom, Keyword) and atom.value == 'while':
+                    content = [ *content[:i], Word('not'), Word('?leave'), *content[i+1:] ]
+                    break
+        if any(isinstance(atom, Keyword) for atom in content):
+            raise Error('A single until or while keyword is allowed in a begin statement')
         yield Sequence(content)
         yield Word('forever')
     def reserved(self) -> Iterable[str]:
         yield from super().reserved()
-        yield 'until' ; yield 'while'
+        yield 'until' ; yield 'while' ; yield 'repeat'
     def __str__(self) -> str:
-        return super().__str__() + '|until|while'
+        return super().__str__() + f' | until | while {fg.LIGHTBLACK_EX}..{fg.RESET} repeat'
 
 class Runtime:
     '''
@@ -283,7 +294,7 @@ class Runtime:
     def __init__(self) -> None:
         self.words: Dict[str, Atom] = {}
         self.stack: List[Atom] = []
-        self.stoped = False
+        self.interrupted = False
 
     def check_type(self, atom: Atom, atom_type: Union[None, Type[Atom], Tuple[Type[Atom],...]]) -> None:
         if atom_type is None or isinstance(atom, atom_type): return
@@ -308,16 +319,19 @@ class Runtime:
     def push(self, atom: Atom) -> None:
         self.stack.append(atom)
 
-    def is_intrinsic(self, word: str) -> bool:
-        if not word in self.words: return False
-        return all(isinstance(atom, (Comment, Intrinsic)) for atom in self.words[word])
+    def is_intrinsic(self, name: str) -> bool:
+        if not name in self.words: return False
+        word = self.words[name]
+        return all(isinstance(atom, (Comment, Intrinsic)) for atom in word.unbox())
 
     def register(self, word: str, definition: Atom) -> None:
         self.words[word] = definition
 
     def execute(self, word: str) -> None:
         if not word in self.words: raise Error(f'unknown word {Word(word)}')
-        for atom in self.words[word].unbox(): atom.execute(self)
+        for atom in self.words[word].unbox(): 
+            atom.execute(self)
+            if self.interrupted: break
 
     def describe(self, word: str) -> str:
         return f'{self.words[word]}';
@@ -342,6 +356,7 @@ class Help(Intrinsic):
 class PrintStack(Intrinsic):
     def __init__(self): super().__init__('.s', 'print stack')
     def execute(self, runtime: Runtime) -> None:
+        print()
         i = len(runtime.stack)
         for atom in runtime.stack:
             print(f'{fg.LIGHTBLACK_EX}  {i} :{fg.RESET}\r\t\t{atom}')
@@ -425,16 +440,18 @@ class Evaluate(Intrinsic):
     def __init__(self): super().__init__('eval', 'a -- eval of a' )
     def execute(self, runtime: Runtime) -> None:
         arg = runtime.pop()
-        for atom in arg.unbox(): atom.execute(runtime)
+        for atom in arg.unbox():
+           atom.execute(runtime)
+           if runtime.interrupted: break
 
 class Forever(Intrinsic):
     def __init__(self): super().__init__('forever', 'a -- , evaluates a forever' )
     def execute(self, runtime: Runtime) -> None:
         arg = runtime.pop(Sequence)
-        while not runtime.stoped:
+        while not runtime.interrupted:
             runtime.push(arg)
             runtime.execute('eval')
-        runtime.stoped = False
+        runtime.interrupted = False
 
 class EvaluateIf(Intrinsic):
     def __init__(self): super().__init__('?if', 'a b -- eval of a if b')
@@ -456,9 +473,9 @@ class Postpend(Intrinsic):
         runtime.push( Sequence([*seq.content, atom]) )
 
 class Leave(Intrinsic):
-    def __init__(self): super().__init__('leave', 'stops execution')
+    def __init__(self): super().__init__('leave', 'interrupts execution')
     def execute(self, runtime: Runtime) -> None:
-        runtime.stoped = True
+        runtime.interrupted = True
 
 class Reverse(Intrinsic):
     def __init__(self): super().__init__('reverse', '{a1 .. an} -- {an .. a1}')
@@ -473,7 +490,7 @@ class Accept(Intrinsic):
 
 class Page(Intrinsic):
     def __init__(self): super().__init__('page', 'clear screen')
-    def execute(self, runtime: Runtime) -> None: print('\033[2J')
+    def execute(self, runtime: Runtime) -> None: print('\033[2J', end='')
 
 class Interpreter:
     ''' The interpreter program '''
@@ -489,7 +506,10 @@ class Interpreter:
         for pattern in Pattern.classes: self.parser.register(pattern())
         for instruction in Interpreter.BOOTSTRAP: self.execute(instruction)
         print(f"Welcome to {fg.LIGHTWHITE_EX}FOLIE{fg.RESET} {Comment('FOrth-Like Interpreter Experiment')}.")
-        print(f'Type {Word("help")} for available patterns and verbs.\n')
+        print(f'Type {Word("help")} for available patterns and verbs.\n\nExamples:')
+        print(f'  {fg.LIGHTBLACK_EX}:factorial (a -- a!)  dup 0 > if dup 1 - factorial * else drop 1 then;{fg.RESET}')
+        print(f'  {fg.LIGHTBLACK_EX}:factorial (a -- a!) 1 begin over 0 > while over 1 - -rot * repeat nip;{fg.RESET}')
+        print(f'  {fg.LIGHTBLACK_EX}6 factorial .{fg.RESET}')
 
     def execute(self, expression: str) -> None:
         self.parser.execute(self.runtime, expression)
@@ -510,12 +530,11 @@ class Interpreter:
         ':<= (a b -- a<=b) > not; :>= (a b -- a>=b) < not; :<> (a b -- a<>b) = not;',
         ':!= (alias) <>; : == (alias) =;',
         ':?ifelse (a b c -- a !, if c | b !, otherwise) {swap} swap ?if swap drop eval;',
-        ':?leave ( a -- stops if a) if leave then;'
-        ':factorial (a -- a!, factorial of a)  dup 0 > if dup 1 - factorial * else drop 1 then;',
+        ':?leave ( a -- interrupts if a) if leave then;'
     ]
 
     def loop(self) -> None:
-        while not self.runtime.stoped:
+        while not self.runtime.interrupted:
             if self.showstack: self.execute('.s')
             try:
                 self.execute(input(self.prompt))
@@ -523,7 +542,7 @@ class Interpreter:
                 print(error)
             except KeyboardInterrupt:
                 print(Error('execution interupted by user'))
-                self.runtime.stoped = False
+                self.runtime.interrupted = False
 
 # Main function calling
 if __name__ == '__main__':
