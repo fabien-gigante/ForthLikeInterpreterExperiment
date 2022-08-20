@@ -5,4 +5,5 @@ skip-string-normalization = true
 preview = true
 
 [tool.pyright]
+reportMissingModuleSource = false
 extraPaths = ["C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\Python39_64"]

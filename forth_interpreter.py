@@ -11,54 +11,50 @@ class Error(Exception):
 
 class Atom:
     ''' Abstract. Smallest element of language. '''
+    def unbox(self) -> Iterable['Atom']:
+        raise Error(f'atom {self} cannot be unboxed')
     def execute(self, runtime: 'Runtime') -> None:
         raise Error(f'atom {self} cannot be executed')
 
-class Token(Atom):
-    ''' Abstract. A Token is an Atom with a value. '''
-    def __init__(self, value: Union[int,float,str]) -> None:
-        self.value = value
-
-class Literal(Token):
+class Literal(Atom):
     ''' Abstract. Atomic int, float or string literal value. '''
-    def __str__(self) -> str:
-        if isinstance(self.value, str):
-            return f"{fg.CYAN}'{self.value}'{fg.RESET}"
-        else:
-            return f'{fg.CYAN}{self.value}{fg.RESET}'
-
+    def unbox(self) -> Iterable[Atom]: yield self
     def execute(self, runtime: 'Runtime') -> None:
         runtime.push(self)
 
 class NumberLiteral(Literal):
     ''' Atomic int or float literal value. '''
+    def __init__(self, value: Union[int,float]) -> None:
+        self.value = value
+    def __str__(self) -> str:
+        return f'{fg.CYAN}{self.value}{fg.RESET}'
 
 class StringLiteral(Literal):
     ''' Atomic string literal value. '''
-    pass
+    def __init__(self, value: str) -> None:
+        self.value = value
+    def __str__(self) -> str:
+        return f"{fg.CYAN}'{self.value}'{fg.RESET}"
 
-class Comment(Token):
+class Comment(Atom):
     ''' A piece of comment string. '''
+    def __init__(self, value: str) -> None:
+        self.value = value
     def __str__(self) -> str:
         return f'{fg.GREEN}({self.value}){fg.RESET}'
+    def execute(self, runtime: 'Runtime') -> None: pass
 
-    def execute(self, runtime: 'Runtime') -> None:
-        pass
-
-class Keyword(Token):
+class Keyword(Atom):
     ''' Intermediate output of the Tokenizer. Not a language element. '''
+    def __init__(self, value: str) -> None:
+        self.value = value
     def __str__(self) -> str:
         return f'{fg.MAGENTA}<{self.value}>{fg.RESET}'
 
-class Quote(Token):
-    ''' A reference to a word by its name. '''
-    def __str__(self) -> str:
-        return f'{fg.YELLOW}`{self.value}`{fg.RESET}'
-    def execute(self, runtime: 'Runtime') -> None:
-        runtime.push(self)
-
-class Word(Token):
+class Word(Atom):
     ''' Fundamental runtime executable token. '''
+    def __init__(self, value: str) -> None:
+        self.value = value
     def __str__(self) -> str:
         return f'{fg.YELLOW}{self.value}{fg.RESET}'
     def execute(self, runtime: 'Runtime') -> None:
@@ -67,19 +63,19 @@ class Word(Token):
 class Sequence(Atom):
     ''' List of atoms. '''
     def __init__(self, content: Iterable[Atom]):
-        super().__init__()
         self.content = [*content]
     def __str__(self) -> str:
         return '{ ' + ' '.join( f'{atom}' for atom in self.content ) + ' }'
     def execute(self, runtime: 'Runtime') -> None:
         runtime.push(self)
+    def unbox(self) -> Iterable[Atom]: yield from self.content
 
-class Intrinsic(Token):
+class Intrinsic(Atom):
     ''' Intrinsic implementation of a word. '''
-    all = []
-    def __init_subclass__(cls) -> None: Intrinsic.all.append(cls)
+    classes : List[Type['Intrinsic']] = []
+    def __init_subclass__(cls) -> None: Intrinsic.classes.append(cls)
     def __init__(self, value: str, comment: Optional[str] = None):
-        super().__init__(value)
+        self.value = value
         self.comment = comment
     def register(self, runtime: 'Runtime'):
         if self.comment is None :
@@ -89,11 +85,13 @@ class Intrinsic(Token):
     def __str__(self) -> str:
         return f'{fg.LIGHTBLACK_EX}intrinsic<{type(self).__name__}>{fg.RESET}'
 
+Token = Union[ Literal, Comment, Keyword ]
+
 class Tokenizer:
-    ''' 
-    Syntaxical tokenizer. 
-    Turns a string into a series of tokens. 
-    Can only produce Litteral, Comment, Quote or Keyword.
+    '''
+    Syntaxical tokenizer.
+    Turns a string into a series of tokens.
+    Can only produce Literal, Comment, Keyword.
     '''
 
     def __init__(self, input_str: str) -> None:
@@ -101,7 +99,7 @@ class Tokenizer:
 
     @staticmethod
     def is_separator(c: str) -> bool:
-        return c.isspace() or c in (':', ';', '{', '}', '`', "'", '"', '(', ')', '`')
+        return c.isspace() or c in (':', ';', '{', '}', "'", '"', '(', ')', '`')
 
     @staticmethod
     def is_number(s: str) -> bool:
@@ -137,8 +135,6 @@ class Tokenizer:
             if token is not None: yield StringLiteral(token); continue
             token = self.parse_string('(', ')')
             if token is not None: yield Comment(token); continue
-            token = self.parse_string('`', '`')
-            if token is not None: yield Quote(token); continue
             token = self.parse_until_separator()
             try: yield NumberLiteral(int(token))
             except ValueError:
@@ -151,29 +147,29 @@ class Pattern:
     Abstract. A pattern is a known sequence of token / keywords that can be handled by the parser.
     It has the form : prefix ... [middle] ... suffix. Parsing implementation is provided in Pattern sub classes.
     '''
-    all = []
-    def __init_subclass__(cls) -> None: Pattern.all.append(cls)
-    def __init__(self, prefix: str, suffix: str, middle: Optional[str] = None) -> None:
-        self.prefix = prefix ; self.suffix = suffix ; self.middle = middle
-    def parse(self, parser: 'Parser') -> Iterable[Token]:
+    classes : List[Type['Pattern']] = []
+    def __init_subclass__(cls) -> None: Pattern.classes.append(cls)
+    def __init__(self, prefix: str, suffix: str) -> None:
+        self.prefix = prefix ; self.suffix = suffix
+    def parse(self, parser: 'Parser') -> Iterable[Atom]:
         pass
+    def reserved(self) -> Iterable[str]:
+        yield self.prefix
+        yield self.suffix
     def __str__(self) -> str:
-        if self.middle is None:
-            return f'{self.prefix}{fg.LIGHTBLACK_EX} .. {fg.RESET}{self.suffix}'
-        else:
-            return f'{self.prefix}{fg.LIGHTBLACK_EX} .. {fg.RESET}{self.middle}{fg.LIGHTBLACK_EX} .. {fg.RESET}{self.suffix}'
-
+        return f'{self.prefix}{fg.LIGHTBLACK_EX} .. {fg.RESET}{self.suffix}'
 
 class Parser:
-    ''' 
-    Gramatical parser. 
-    Parses a string or a series of tokens. Resolves any Keyword into Words or Sequences. 
-    Can therefore only produce Litteral, Comment, Quote or Word or Sequence.
+    '''
+    Gramatical parser.
+    Parses a string or a series of tokens. Resolves any Keyword into Words or Sequences.
+    Can therefore only produce Litteral, Comment, Word or Sequence.
     '''
 
     def __init__(self) -> None:
         self.input : Optional[Iterable[Token]] = None
         self.patterns : Dict[str, Pattern] = {}
+        self.closure: Optional[str] = None
 
     def register(self, pattern: Pattern) -> None:
         self.patterns[pattern.prefix] = pattern
@@ -183,76 +179,100 @@ class Parser:
         yield from self.parse_many()
 
     def next(self) -> Optional[Token]:
+        if self.input is None: return None
         return next(self.input, None)
 
-    def parse_many(self, closure: Optional[str] = None, ignore: Tuple[str] = ()) -> Iterable[Atom]:
+    def parse_many(self, closure: Tuple[Optional[str],...] = (None, ), ignore: Tuple[str,...] = ()) -> Iterable[Atom]:
+        self.closure = None
         while True:
             token = self.next()
-            if token is None and closure is None: break
+            if token is None and None in closure: break
             if token is None: raise Error(f'missing closing {closure}')
-            if isinstance(token, Keyword) and token.value == closure: break
-            if isinstance(token, Keyword) and token.value in ignore: yield token
-            else: yield from self.parse_token(token)
+            if isinstance(token, Keyword) and token.value in closure:
+                self.closure = token.value ; break
+            if isinstance(token, Keyword) and token.value in ignore:
+                yield token
+            else:
+                yield from self.parse_token(token)
 
     def reserved_patterns(self) -> Iterable[str]:
-        for p in self.patterns.values():
-            yield from (p.prefix, p.suffix, p.middle)
+        for p in self.patterns.values(): yield from p.reserved()
 
     def check_valid_word(self, word: str) -> None:
         if any(Tokenizer.is_separator(ch) for ch in word):
-           raise Error(f'word name {token} contains an invalid character')
+            raise Error(f'word name {word} contains an invalid character')
         if word in self.reserved_patterns():
-            raise Error(f'word name {token} is reserved')
+            raise Error(f'word name {word} is reserved')
         if Tokenizer.is_number(word):
-            raise Error(f'word name {token} is a number')
-        return True
+            raise Error(f'word name {word} is a number')
 
     def parse_token(self, token: Token) -> Iterable[Atom]:
-        if not isinstance(token, Keyword): 
+        if not isinstance(token, Keyword):
             yield token ; return
         if token.value in self.patterns:
             yield from self.patterns[token.value].parse(self)
-        else: 
+        else:
             self.check_valid_word(token.value)
             yield Word(token.value)
 
     def execute(self, runtime: 'Runtime', input_str: str) -> None:
-        atoms = self.parse(input_str)
+        atoms = [*self.parse(input_str)]
         for atom in atoms: atom.execute(runtime)
 
 class SequencePattern(Pattern):
     ''' Pattern { ... } used to define a sequence. '''
     def __init__(self) : super().__init__('{', '}')
-    def parse(self, parser: Parser) -> Iterable[Token]:
-        yield Sequence(parser.parse_many(self.suffix))
+    def parse(self, parser: Parser) -> Iterable[Atom]:
+        yield Sequence(parser.parse_many((self.suffix,)))
 
 class DefinePattern(Pattern):
     ''' Pattern : ... ; used to define a new word. '''
     def __init__(self) : super().__init__(':', ';')
-    def parse(self, parser: Parser) -> Iterable[Token]:
+    def parse(self, parser: Parser) -> Iterable[Atom]:
         word = parser.next()
         if word is None: raise Error('missing word in definition')
         if not isinstance(word, Keyword): raise Error(f'invalid word type {word}')
         parser.check_valid_word(word.value)
-        yield Sequence(parser.parse_many(self.suffix))
-        yield Quote(word.value)
+        yield Sequence(parser.parse_many((self.suffix,)))
+        yield Sequence([Word(word.value)]) # TODO : StringLiteral ?
         yield Word('def')
 
 class IfPattern(Pattern):
-    ''' Pattern if ... else ... then used to define conditional logic. '''
+    ''' Pattern if ... else ... then, used to define conditional logic. '''
     def __init__(self) :
-        super().__init__('if', 'then', 'else')
-    def parse(self, parser: Parser) -> Iterable[Token]:
-        then_content = [*parser.parse_many(self.suffix, (self.middle,))]
-        else_content = None
-        for i in range(len(then_content)):
-            if isinstance(then_content[i], Keyword) and then_content[i].value == self.middle:
-                (then_content, else_content) = (then_content[:i], then_content[i+1:])
+        super().__init__('if', 'then')
+    def parse(self, parser: Parser) -> Iterable[Atom]:
+        then_cont = [*parser.parse_many((self.suffix,), ('else',))]
+        else_cont = None
+        for i, atom in enumerate(then_cont):
+            if isinstance(atom, Keyword) and atom.value == 'else':
+                (then_cont, else_cont) = (then_cont[:i], then_cont[i+1:])
                 break
-        if else_content is None:
-            yield from (Sequence(then_content), Word('swap'), Word('?!'))
+        if else_cont is None:
+            yield from (Sequence(then_cont), Word('swap'), Word('?if'))
         else:
-            yield from (Sequence(then_content), Sequence(else_content), Word('rot'), Word('?ifelse'))
+            yield from (Sequence(then_cont), Sequence(else_cont), Word('rot'), Word('?ifelse'))
+    def reserved(self) -> Iterable[str]:
+        yield from super().reserved()
+        yield 'else'
+    def __str__(self) -> str:
+        return f'{self.prefix}{fg.LIGHTBLACK_EX} .. {fg.RESET}[ else {fg.LIGHTBLACK_EX} .. {fg.RESET}] {self.suffix}'
+
+class BeginPattern(Pattern):
+    ''' Pattern begin ... again, for forever loops. '''
+    def __init__(self) :
+        super().__init__('begin', 'again')
+    def parse(self, parser: Parser) -> Iterable[Atom]:
+        content = [*parser.parse_many((self.suffix, 'until', 'while'))]
+        if parser.closure == 'until': content += [ Word('?leave') ]
+        elif parser.closure == 'while': content += [ Word('not'), Word('?leave') ]
+        yield Sequence(content)
+        yield Word('forever')
+    def reserved(self) -> Iterable[str]:
+        yield from super().reserved()
+        yield 'until' ; yield 'while'
+    def __str__(self) -> str:
+        return super().__str__() + '|until|while'
 
 class Runtime:
     '''
@@ -263,27 +283,26 @@ class Runtime:
     def __init__(self) -> None:
         self.words: Dict[str, List[Atom]] = {}
         self.stack: List[Atom] = []
-        self.halted = False
+        self.stoped = False
 
-    def check_type(self, atom: Atom, atom_type: Union[Type[Atom], Tuple[Type[Atom]], None]) -> None:
+    def check_type(self, atom: Atom, atom_type: Union[None, Type[Atom], Tuple[Type[Atom],...]]) -> None:
         if atom_type is None or isinstance(atom, atom_type): return
         if isinstance(atom_type, type):
             raise Error(f'argument {atom} is not a {atom_type.__name__.lower()}')
-        else:
-            raise Error(f'argument {atom} is not one of {" , ".join(t.__name__.lower() for t in atom_type)}')
+        raise Error(f'argument {atom} is not one of {" , ".join(t.__name__.lower() for t in atom_type)}')
 
     def peek(self, i: int = 0) -> Atom : return self.stack[-(i+1)]
-    def pop(self, atom_type: Union[Type[Atom],Tuple[Type[Atom]],None] = None) -> Atom:
+    def pop(self, atom_type: Union[None, Type[Atom], Tuple[Type[Atom],...]] = None) -> Atom:
         if len(self.stack) == 0: raise Error('empty stack')
         self.check_type(self.stack[-1], atom_type)
         return self.stack.pop()
 
-    def pop_args(self, types: List[Union[Type[Atom], Tuple[Type[Atom]], None]], matching: bool = False) -> Iterable[Atom]:
+    def pop_args(self, types: List[Union[None, Type[Atom], Tuple[Type[Atom],...]]], matching: bool = False) -> Iterable[Atom]:
         n = len(types)
         if len(self.stack) < n: raise Error(f'need {n} arguments')
         for i, t in enumerate(types): self.check_type(self.peek(i), t)
         if matching and len({ type(arg) for arg in self.stack[-n:] }) != 1:
-            raise Error(f'arguments types no not match')
+            raise Error('arguments types no not match')
         for _ in range(n): yield self.pop()
 
     def push(self, atom: Atom) -> None:
@@ -315,10 +334,10 @@ class Print(Intrinsic):
 class Help(Intrinsic):
     def __init__(self): super().__init__('.w', 'print patterns and words')
     def execute(self, runtime: Runtime) -> None:
-        for pattern in Pattern.all:
-            print(f'  {pattern()}\r\t\t\t{fg.LIGHTBLACK_EX}pattern<{pattern.__name__}>{fg.RESET}')
+        for pattern in Pattern.classes:
+            print(f'  {pattern()}   {fg.LIGHTBLACK_EX}pattern<{pattern.__name__}>{fg.RESET}')
         for key in sorted(runtime.words.keys()):
-            print(f'  : {fg.YELLOW}{key}{fg.RESET}\r\t\t{runtime.describe(key)} ;')
+            print(f'  : {fg.YELLOW}{key}{fg.RESET} {runtime.describe(key)} ;')
 
 class PrintStack(Intrinsic):
     def __init__(self): super().__init__('.s', 'print stack')
@@ -329,15 +348,15 @@ class PrintStack(Intrinsic):
             i -= 1
 
 class Define(Intrinsic):
-    def __init__(self): super().__init__('def', '{a1 .. an} b --  , define b as a1 .. an')
+    def __init__(self): super().__init__('def', 'a { b } --  , define b as a')
     def execute(self, runtime: Runtime) -> None:
-        quote, definition = runtime.pop_args([Quote, Sequence])
-        word = quote.value
-        if any(Tokenizer.is_separator(ch) for ch in word):
-            raise Error(f'invalid character in word {quote}')
-        if runtime.is_intrinsic(word):
-            raise Error(f'cannot redefine intrinsic {Word(word)}')
-        runtime.register(word, definition.content)
+        quote, definition = runtime.pop_args([Sequence, None])
+        word = quote.content[0] if len(quote.content) == 1 else None
+        if word is None: 
+            raise Error(f'invalid argument {quote} in definition')
+        if runtime.is_intrinsic(word.value):
+            raise Error(f'cannot redefine intrinsic {word}')
+        runtime.register(word.value, [*definition.unbox()])
 
 class Add(Intrinsic):
     def __init__(self): super().__init__('+', 'a b -- a+b')
@@ -345,9 +364,9 @@ class Add(Intrinsic):
         arg2, arg1 = runtime.pop_args([(Literal, Sequence), (Literal, Sequence)], True)
         if isinstance(arg1, Sequence):
             runtime.push(Sequence([*arg1.content, *arg2.content]))
-        elif isinstance(arg1, NumberLiteral):
+        elif isinstance(arg1, NumberLiteral) and isinstance(arg2, NumberLiteral):
             runtime.push(NumberLiteral(arg1.value + arg2.value))
-        elif isinstance(arg1, StringLiteral):
+        elif isinstance(arg1, StringLiteral) and isinstance(arg2, StringLiteral):
             runtime.push(StringLiteral(arg1.value + arg2.value))
 
 class Substract(Intrinsic):
@@ -374,41 +393,23 @@ class Divide(Intrinsic):
         arg2, arg1 = runtime.pop_args([NumberLiteral, NumberLiteral])
         runtime.push(NumberLiteral(arg1.value / arg2.value))
 
-class Equal(Intrinsic):
+class Equals(Intrinsic):
     def __init__(self): super().__init__('=', 'a b -- a=b')
     def execute(self, runtime: Runtime) -> None:
         arg2, arg1 = runtime.pop_args([Literal, Literal])
         runtime.push(NumberLiteral(1 if arg1.value == arg2.value else 0))
 
-class Different(Intrinsic):
-    def __init__(self): super().__init__('<>', 'a b -- a<>b')
-    def execute(self, runtime: Runtime) -> None:
-        arg2, arg1 = runtime.pop_args([Literal, Literal])
-        runtime.push(NumberLiteral(1 if arg1.value != arg2.value else 0))
-
-class Lower(Intrinsic):
+class LowerThan(Intrinsic):
     def __init__(self): super().__init__('<', 'a b -- a<b')
     def execute(self, runtime: Runtime) -> None:
         arg2, arg1 = runtime.pop_args([Literal, Literal], True)
         runtime.push(NumberLiteral(1 if arg1.value < arg2.value else 0))
 
-class LowerOrEqual(Intrinsic):
-    def __init__(self): super().__init__('<=', 'a b -- a<=b')
-    def execute(self, runtime: Runtime) -> None:
-        arg2, arg1 = runtime.pop_args([Literal, Literal], True)
-        runtime.push(NumberLiteral(1 if arg1.value <= arg2.value else 0))
-
-class Greater(Intrinsic):
+class GreaterThan(Intrinsic):
     def __init__(self): super().__init__('>', 'a b -- a>b')
     def execute(self, runtime: Runtime) -> None:
         arg2, arg1 = runtime.pop_args([Literal, Literal], True)
         runtime.push(NumberLiteral(1 if arg1.value > arg2.value else 0))
-
-class GreaterOrEqual(Intrinsic):
-    def __init__(self): super().__init__('>=', 'a b -- a>=b')
-    def execute(self, runtime: Runtime) -> None:
-        arg2, arg1 = runtime.pop_args([Literal, Literal], True)
-        runtime.push(NumberLiteral(1 if arg1.value >= arg2.value else 0))
 
 class Clear(Intrinsic):
     def __init__(self): super().__init__('clear', 'a1 .. an --')
@@ -421,21 +422,26 @@ class Depth(Intrinsic):
         runtime.push(NumberLiteral(len(runtime.stack)))
 
 class Evaluate(Intrinsic):
-    def __init__(self): super().__init__('!', 'a -- eval of a' )
+    def __init__(self): super().__init__('eval', 'a -- eval of a' )
     def execute(self, runtime: Runtime) -> None:
         arg = runtime.pop()
-        if isinstance(arg, Quote):
-            runtime.execute(arg.value)
-        elif isinstance(arg, Sequence):
-            for atom in arg.content: atom.execute(runtime)
-        else: arg.execute(runtime)
+        for atom in arg.unbox(): atom.execute(runtime)
+
+class Forever(Intrinsic):
+    def __init__(self): super().__init__('forever', 'a -- , evaluates a forever' )
+    def execute(self, runtime: Runtime) -> None:
+        arg = runtime.pop(Sequence)
+        while not runtime.stoped:
+            runtime.push(arg)
+            runtime.execute('eval')
+        runtime.stoped = False
 
 class EvaluateIf(Intrinsic):
-    def __init__(self): super().__init__('?!', 'a b -- eval of a if b')
+    def __init__(self): super().__init__('?if', 'a b -- eval of a if b')
     def execute(self, runtime: Runtime) -> None:
         cond = runtime.pop(NumberLiteral)
         if cond.value == 0: runtime.pop()
-        else: runtime.execute('!')
+        else: runtime.execute('eval')
 
 class Prepend(Intrinsic):
     def __init__(self): super().__init__('<+', 'a1 {a2 .. an} -- {a1 a2 .. an}')
@@ -449,10 +455,10 @@ class Postpend(Intrinsic):
         seq, atom = runtime.pop_args([Sequence, None])
         runtime.push( Sequence([*seq.content, atom]) )
 
-class Bye(Intrinsic):
-    def __init__(self): super().__init__('bye', 'interrupts execution')
+class Leave(Intrinsic):
+    def __init__(self): super().__init__('leave', 'stops execution')
     def execute(self, runtime: Runtime) -> None:
-        runtime.halted = True
+        runtime.stoped = True
 
 class Reverse(Intrinsic):
     def __init__(self): super().__init__('reverse', '{a1 .. an} -- {an .. a1}')
@@ -465,6 +471,10 @@ class Accept(Intrinsic):
     def execute(self, runtime: Runtime) -> None:
         runtime.push( StringLiteral(input('  ? ')) )
 
+class Page(Intrinsic):
+    def __init__(self): super().__init__('page', 'clear screen')
+    def execute(self, runtime: Runtime) -> None: print('\033[2J')
+
 class Interpreter:
     ''' The interpreter program '''
 
@@ -474,43 +484,47 @@ class Interpreter:
         self.prompt = fg.LIGHTWHITE_EX + '> ' + fg.RESET
         self.showstack = True
         self.runtime = Runtime()
-        for intrinsic in Intrinsic.all: intrinsic().register(self.runtime)
+        for intrinsic in Intrinsic.classes: intrinsic().register(self.runtime)
         self.parser = Parser()
-        for pattern in Pattern.all: self.parser.register(pattern())
+        for pattern in Pattern.classes: self.parser.register(pattern())
         for instruction in Interpreter.BOOTSTRAP: self.execute(instruction)
-        print(f"Welcome to {fg.LIGHTWHITE_EX}FOLI{fg.RESET} {Comment('FOrth-Like Interpreter')}.")
-        print(f'Type {Word("help")} for some hints about syntax and verbs.\n')
+        print(f"Welcome to {fg.LIGHTWHITE_EX}FOLIE{fg.RESET} {Comment('FOrth-Like Interpreter Experiment')}.")
+        print(f'Type {Word("help")} for available patterns and verbs.\n')
 
     def execute(self, expression: str) -> None:
         self.parser.execute(self.runtime, expression)
 
     BOOTSTRAP = [
-        ':print (alias) .; :eval (alias) !;',
-        ':stack (alias) .s; :help (alias) .w;',
+        ':print (alias) .; :stack (alias) .s; :help (alias) .w; :bye (alias) leave;',
         ':prepend (alias) <+; :append (alias) +>;',
-        ':?if (alias ?!; :!= (alias) <>; : == (alias) =;',
-        ':drop (a --) {} +> 0 * !;',
-        ':dup (a -- a a) {} +> 2 * !;',
-        ':swap (a b -- b a) {} +> +> !;',
-        ':rot (a b c -- b c a) {} +> <+ +> !;',
+        ':drop (a --) {} +> 0 * eval;',
+        ':dup (a -- a a) {} +> 2 * eval;',
+        ':swap (a b -- b a) {} +> +> eval;',
+        ':rot (a b c -- b c a) {} +> <+ +> eval;',
         ':-rot (a b c -- c a b) rot rot;',
         ':nip (a b -- b) swap drop;',
         ':tuck (a b -- b a b) dup -rot;',
         ':over (a b -- a b a) swap tuck;',
         ':neg (a -- -a) 0 swap -;',
-        ':?ifelse (a b c -- a ! if c | b ! otherwise) `swap` swap ?! swap drop !;',
-        ':factorial (a -- a! , factorial of a)  dup 0 > if dup 1 - factorial * else drop 1 then;',
+        ':not (a -- boolean not of a) 0 1 rot ?ifelse;',
+        ':<= (a b -- a<=b) > not; :>= (a b -- a>=b) < not; :<> (a b -- a<>b) = not;',
+        ':!= (alias) <>; : == (alias) =;',
+        ':?ifelse (a b c -- a !, if c | b !, otherwise) {swap} swap ?if swap drop eval;',
+        ':?leave ( a -- stops if a) if leave then;'
+        ':factorial (a -- a!, factorial of a)  dup 0 > if dup 1 - factorial * else drop 1 then;',
     ]
 
     def loop(self) -> None:
-        while not self.runtime.halted:
+        while not self.runtime.stoped:
             if self.showstack: self.execute('.s')
             try:
                 self.execute(input(self.prompt))
             except Error as error:
                 print(error)
+            except KeyboardInterrupt:
+                print(Error('execution interupted by user'))
+                self.runtime.stoped = False
 
 # Main function calling
 if __name__ == '__main__':
     Interpreter().loop()
-
