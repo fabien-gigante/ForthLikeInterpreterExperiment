@@ -79,9 +79,9 @@ class Intrinsic(Atom):
         self.comment = comment
     def register(self, runtime: 'Runtime'):
         if self.comment is None :
-            runtime.register(self.value, [self])
+            runtime.register(self.value, self)
         else:
-            runtime.register(self.value, [Comment(self.comment), self])
+            runtime.register(self.value, Sequence([Comment(self.comment), self]))
     def __str__(self) -> str:
         return f'{fg.LIGHTBLACK_EX}intrinsic<{type(self).__name__}>{fg.RESET}'
 
@@ -281,7 +281,7 @@ class Runtime:
     '''
 
     def __init__(self) -> None:
-        self.words: Dict[str, List[Atom]] = {}
+        self.words: Dict[str, Atom] = {}
         self.stack: List[Atom] = []
         self.stoped = False
 
@@ -312,15 +312,15 @@ class Runtime:
         if not word in self.words: return False
         return all(isinstance(atom, (Comment, Intrinsic)) for atom in self.words[word])
 
-    def register(self, word: str, definition: List[Atom]) -> None:
-        self.words[word] = [*definition]
+    def register(self, word: str, definition: Atom) -> None:
+        self.words[word] = definition
 
     def execute(self, word: str) -> None:
         if not word in self.words: raise Error(f'unknown word {Word(word)}')
-        for atom in self.words[word]: atom.execute(self)
+        for atom in self.words[word].unbox(): atom.execute(self)
 
     def describe(self, word: str) -> str:
-        return ' '.join( f'{atom}' for atom in self.words[word] )
+        return f'{self.words[word]}';
 
 #
 #   All intrinsic implementations
@@ -356,7 +356,7 @@ class Define(Intrinsic):
             raise Error(f'invalid argument {quote} in definition')
         if runtime.is_intrinsic(word.value):
             raise Error(f'cannot redefine intrinsic {word}')
-        runtime.register(word.value, [*definition.unbox()])
+        runtime.register(word.value, definition)
 
 class Add(Intrinsic):
     def __init__(self): super().__init__('+', 'a b -- a+b')
