@@ -336,7 +336,8 @@ class Runtime:
             if self.interrupted: break
 
     def describe(self, word: str) -> str:
-        return f'{self.words[word]}';
+        if not word in self.words: raise Error(f'unknown word {Word(word)}')
+        return ' '.join(f'{word}' for word in self.words[word].unbox())
 
 #
 #   All intrinsic implementations
@@ -509,9 +510,9 @@ class Interpreter:
         for instruction in Interpreter.BOOTSTRAP: self.execute(instruction)
         print(f"Welcome to {fg.LIGHTWHITE_EX}FOLIE{fg.RESET} {Comment('FOrth-Like Interpreter Experiment')}.")
         print(f'Type {Word("help")} for available patterns and verbs.\n\nExamples:')
-        print(f'  {fg.LIGHTBLACK_EX}:factorial (a -- a!)  dup 0 > if dup 1 - factorial * else drop 1 then;{fg.RESET}')
-        print(f'  {fg.LIGHTBLACK_EX}:factorial (a -- a!) 1 begin over 0 > while over 1 - -rot * repeat nip;{fg.RESET}')
-        print(f'  {fg.LIGHTBLACK_EX}6 factorial .{fg.RESET}')
+        print(f'  {fg.LIGHTBLACK_EX}:! (a -- a!)  dup 0 > if dup 1 - ! * else drop 1 then;{fg.RESET}')
+        print(f'  {fg.LIGHTBLACK_EX}:! (a -- a!) 1 begin over 0 > while over 1 - -rot * repeat nip;{fg.RESET}')
+        print(f'  {fg.LIGHTBLACK_EX}6 ! .{fg.RESET}')
 
     def execute(self, expression: str) -> None:
         self.parser.execute(self.runtime, expression)
