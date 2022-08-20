@@ -29,6 +29,7 @@
     <InterpreterReference Include="Global|PythonCore|3.9" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="LICENSE.txt" />
     <Content Include="pyproject.toml" />
     <Content Include="README.md" />
   </ItemGroup>
