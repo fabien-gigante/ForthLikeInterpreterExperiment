@@ -9,7 +9,7 @@ from colorama import Fore as fg
 class Error(Exception):
     ''' Applicative Error. Rendered in red. '''
     def __init__(self, msg) -> None:
-        super().__init__(f'{fg.RED}ERROR:{fg.RESET} {msg}')
+        super().__init__(f'{fg.LIGHTRED_EX}ERROR:{fg.RESET} {msg}')
 
 class Atom:
     ''' Abstract. Smallest element of language. '''
@@ -219,9 +219,7 @@ class Parser:
 
     def execute(self, runtime: 'Runtime', input_str: str) -> None:
         atoms = [*self.parse(input_str)]
-        for atom in atoms:
-            atom.execute(runtime)
-            if runtime.interrupted: break
+        for atom in atoms: atom.execute(runtime)
 
 class SequencePattern(Pattern):
     ''' Pattern { ... } used to define a sequence. '''
@@ -296,7 +294,6 @@ class Runtime:
     def __init__(self) -> None:
         self.words: Dict[str, Atom] = {}
         self.stack: List[Atom] = []
-        self.interrupted = False
 
     def check_type(self, atom: Atom, atom_type: Union[None, Type[Atom], Tuple[Type[Atom],...]]) -> None:
         if atom_type is None or isinstance(atom, atom_type): return
@@ -324,16 +321,14 @@ class Runtime:
     def is_intrinsic(self, name: str) -> bool:
         if not name in self.words: return False
         word = self.words[name]
-        return all(isinstance(atom, (Comment, Intrinsic)) for atom in word.unbox())
+        return any(isinstance(atom, Intrinsic) for atom in word.unbox())
 
     def register(self, word: str, definition: Atom) -> None:
         self.words[word] = definition
 
     def execute(self, word: str) -> None:
         if not word in self.words: raise Error(f'unknown word {Word(word)}')
-        for atom in self.words[word].unbox(): 
-            atom.execute(self)
-            if self.interrupted: break
+        for atom in self.words[word].unbox(): atom.execute(self)
 
     def describe(self, word: str) -> str:
         if not word in self.words: raise Error(f'unknown word {Word(word)}')
@@ -443,18 +438,23 @@ class Evaluate(Intrinsic):
     def __init__(self): super().__init__('eval', 'a -- eval of a' )
     def execute(self, runtime: Runtime) -> None:
         arg = runtime.pop()
-        for atom in arg.unbox():
-           atom.execute(runtime)
-           if runtime.interrupted: break
+        for atom in arg.unbox(): atom.execute(runtime)
+
+class LoopInterrupt(Exception): pass
+
+class Leave(Intrinsic):
+    def __init__(self): super().__init__('leave', 'interrupts loop')
+    def execute(self, runtime: Runtime) -> None: raise LoopInterrupt()
 
 class Forever(Intrinsic):
     def __init__(self): super().__init__('forever', 'a -- , evaluates a forever' )
     def execute(self, runtime: Runtime) -> None:
         arg = runtime.pop(Sequence)
-        while not runtime.interrupted:
-            runtime.push(arg)
-            runtime.execute('eval')
-        runtime.interrupted = False
+        try:
+            while True:
+                runtime.push(arg)
+                runtime.execute('eval')
+        except LoopInterrupt: pass
 
 class EvaluateIf(Intrinsic):
     def __init__(self): super().__init__('?if', 'a b -- eval of a if b')
@@ -474,11 +474,6 @@ class Postpend(Intrinsic):
     def execute(self, runtime: Runtime) -> None:
         seq, atom = runtime.pop_args([Sequence, None])
         runtime.push( Sequence([*seq.content, atom]) )
-
-class Leave(Intrinsic):
-    def __init__(self): super().__init__('leave', 'interrupts execution')
-    def execute(self, runtime: Runtime) -> None:
-        runtime.interrupted = True
 
 class Reverse(Intrinsic):
     def __init__(self): super().__init__('reverse', '{a1 .. an} -- {an .. a1}')
@@ -537,7 +532,7 @@ class Interpreter:
     ]
 
     def loop(self) -> None:
-        while not self.runtime.interrupted:
+        while True :
             if self.showstack: self.execute('.s')
             try:
                 self.execute(input(self.prompt))
@@ -545,7 +540,8 @@ class Interpreter:
                 print(error)
             except KeyboardInterrupt:
                 print(Error('execution interupted by user'))
-                self.runtime.interrupted = False
+            except LoopInterrupt: 
+                break
 
 # Main function calling
 if __name__ == '__main__':
