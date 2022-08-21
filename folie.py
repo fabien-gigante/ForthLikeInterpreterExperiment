@@ -638,21 +638,24 @@ class Interpreter:
         ':?leave ( a -- interrupts if a) if leave then;'
     ]
 
+    def execute_input(self) -> None:
+        input_str = '' ; prompt = self.prompt
+        while True:
+            input_str += input(prompt)
+            try:
+                self.execute(input_str)
+            except ParsingIncomplete:
+                input_str += '\n'
+                prompt = self.prompt_continued
+                continue
+            except: raise
+            else: break
+
     def loop(self) -> None:
         while True :
             if self.showstack: self.execute('.s')
             try:
-                input_str = '' ; prompt = self.prompt_std
-                while True:
-                    input_str += input(prompt)
-                    try:
-                        self.execute(input_str)
-                    except ParsingIncomplete:
-                        input_str += '\n'
-                        prompt = self.prompt_cont
-                        continue
-                    except: raise
-                    else: break
+                self.execute_input()
             except Error as error:
                 print(error)
             except KeyboardInterrupt:
