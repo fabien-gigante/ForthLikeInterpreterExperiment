@@ -1,6 +1,6 @@
 ''' FOLIE : FOrth-Like Interpreter Experiment '''
 
-from typing import Dict, Iterable, Optional, Tuple, Union, List, Type
+from typing import Dict, List, Set, Iterable, Optional, Tuple, Union, Type
 import os
 import colorama
 from colorama import Fore as fg
@@ -67,6 +67,8 @@ class Sequence(Atom):
     def __init__(self, content: Iterable[Atom]):
         self.content = [*content]
     def __str__(self) -> str:
+        if len(self.content) == 1 and isinstance(self.content[0], Word):
+            return f'`{self.content[0]}`' # prefered notation in this case
         return '{ ' + ' '.join( f'{atom}' for atom in self.content ) + ' }'
     def execute(self, runtime: 'Runtime') -> None:
         runtime.push(self)
@@ -74,8 +76,8 @@ class Sequence(Atom):
 
 class Intrinsic(Atom):
     ''' Intrinsic implementation of a word. '''
-    classes : List[Type['Intrinsic']] = []
-    def __init_subclass__(cls) -> None: Intrinsic.classes.append(cls)
+    classes : Set[Type['Intrinsic']] = set()
+    def __init_subclass__(cls) -> None: Intrinsic.classes.add(cls)
     def __init__(self, value: str, comment: Optional[str] = None):
         self.value = value
         self.comment = comment
@@ -101,17 +103,14 @@ class Tokenizer:
 
     @staticmethod
     def is_separator(c: str) -> bool:
-        return c.isspace() or c in (':', ';', '{', '}', "'", '"', '(', ')')
+        return c.isspace() or c in (':', ';', '{', '}', "'", '"', '(', ')', '`')
 
     @staticmethod
     def is_number(s: str) -> bool:
-        try: int(s)
-        except ValueError: pass
-        else: return True
-        try: float(s)
-        except ValueError: pass
-        else: return True
-        return False
+        try: _ = int(s); return True
+        except ValueError:
+            try: _ = float(s) ; return True
+            except ValueError: return False
 
     def parse_string(self, prefix: str, suffix: str) -> Optional[str]:
         if self.input[0] != prefix: return None
@@ -147,19 +146,25 @@ class Tokenizer:
 class Pattern:
     '''
     Abstract. A pattern is a known sequence of token / keywords that can be handled by the parser.
-    It has the form : prefix ... suffix. Parsing implementation is provided in Pattern sub classes.
+    It has the form : prefix ... suffix. Parsing implementation is provided in sub classes.
     '''
-    classes : List[Type['Pattern']] = []
-    def __init_subclass__(cls) -> None: Pattern.classes.append(cls)
-    def __init__(self, prefix: str, suffix: str) -> None:
-        self.prefix = prefix ; self.suffix = suffix
+    classes : Set[Type['Pattern']] = set()
+    def __init_subclass__(cls) -> None: Pattern.classes.add(cls)
+    def __init__(self, prefix: str, suffix: str, comment: Optional[str] = None) -> None:
+        self.prefix = prefix ; self.suffix = suffix ; self.comment = comment
     def parse(self, parser: 'Parser') -> Iterable[Atom]:
-        pass
+        ... # to overload
     def reserved(self) -> Iterable[str]:
         yield self.prefix
-        yield self.suffix
+        if self.suffix is not None: yield self.suffix
     def __str__(self) -> str:
         return f'{self.prefix}{fg.LIGHTBLACK_EX} .. {fg.RESET}{self.suffix}'
+    def register(self, parser: 'Parser'):
+        parser.register(self.prefix, self)
+    def describe(self) -> str:
+        desc = f'{Comment(self.comment)} ' if self.comment is not None else ''
+        desc +=  f'{fg.LIGHTBLACK_EX}pattern<{type(self).__name__}>{fg.RESET}';
+        return desc
 
 class Parser:
     '''
@@ -173,8 +178,8 @@ class Parser:
         self.patterns : Dict[str, Pattern] = {}
         self.closure: Optional[str] = None
 
-    def register(self, pattern: Pattern) -> None:
-        self.patterns[pattern.prefix] = pattern
+    def register(self, prefix: str, pattern: Pattern) -> None:
+        self.patterns[prefix] = pattern
 
     def parse(self, input_str: str) -> Iterable[Atom]:
         self.input = Tokenizer(input_str).tokenize()
@@ -222,14 +227,20 @@ class Parser:
         for atom in atoms: atom.execute(runtime)
 
 class SequencePattern(Pattern):
-    ''' Pattern { ... } used to define a sequence. '''
-    def __init__(self) : super().__init__('{', '}')
+    ''' Pattern { ... }  to define a sequence. '''
+    def __init__(self) : super().__init__('{', '}','builds a sequence')
+    def parse(self, parser: Parser) -> Iterable[Atom]:
+        yield Sequence(parser.parse_many((self.suffix,)))
+
+class ExpressionPattern(Pattern):
+    ''' Alternative pattern ` ... `  to define a sequence. Alias for { ... }. '''
+    def __init__(self) : super().__init__('`', '`', 'alias of { ... }')
     def parse(self, parser: Parser) -> Iterable[Atom]:
         yield Sequence(parser.parse_many((self.suffix,)))
 
 class DefinePattern(Pattern):
-    ''' Pattern : ... ; used to define a new word. '''
-    def __init__(self) : super().__init__(':', ';')
+    ''' Pattern : ... ;  to define a new word. '''
+    def __init__(self) : super().__init__(':', ';', 'defines a new word')
     def parse(self, parser: Parser) -> Iterable[Atom]:
         word = parser.next()
         if word is None: raise Error('missing word in definition')
@@ -239,10 +250,30 @@ class DefinePattern(Pattern):
         yield Sequence([Word(word.value)])
         yield Word('def')
 
+class VariablePattern(Pattern):
+    ''' Pattern -> ...  to define new variables. '''
+    def __init__(self) : super().__init__('->', None, 'introduces variables')
+    def parse(self, parser: Parser) -> Iterable[Atom]:
+        content = []
+        while True:
+            var = parser.next()
+            if var is None: raise Error('missing { after ->')
+            if not isinstance(var, Keyword): raise Error(f'invalid variable type {var}')
+            if var.value == '{': break
+            parser.check_valid_word(var.value)
+            content.extend([Sequence([Word(var.value)]), Word('var')])
+        if len(content) == 0: raise Error('missing variables after ->')
+        rest = parser.parse_many(('}',))
+        content.extend(rest)
+        yield Sequence(content)
+        yield Word('eval')
+    def __str__(self) -> str:
+        return f'{self.prefix}{fg.LIGHTBLACK_EX} .. {fg.RESET}' + ' { ' + f'{fg.LIGHTBLACK_EX} .. {fg.RESET}' + ' }'
+
 class IfPattern(Pattern):
     ''' Pattern if ... else ... then, used to define conditional logic. '''
     def __init__(self) :
-        super().__init__('if', 'then')
+        super().__init__('if', 'then', 'conditional logic')
     def parse(self, parser: Parser) -> Iterable[Atom]:
         then_cont = [*parser.parse_many((self.suffix,), ('else',))]
         else_cont = None
@@ -265,7 +296,7 @@ class IfPattern(Pattern):
 class BeginPattern(Pattern):
     ''' Pattern begin ... again, for forever loops. '''
     def __init__(self) :
-        super().__init__('begin', 'again')
+        super().__init__('begin', 'again', 'loop with optional condition')
     def parse(self, parser: Parser) -> Iterable[Atom]:
         content = [*parser.parse_many((self.suffix, 'until', 'repeat'), ('while',))]
         if parser.closure == 'until': 
@@ -285,6 +316,33 @@ class BeginPattern(Pattern):
     def __str__(self) -> str:
         return super().__str__() + f' | until | while {fg.LIGHTBLACK_EX}..{fg.RESET} repeat'
 
+class Scope:
+    ''' Context for local variables '''
+    def __init__(self, parent: 'Scope' = None) -> None:
+        self.parent: 'Scope' = parent
+        self.variables: Dict[str, Atom] = {}
+    def define(self, name: str, value: Atom) -> None:
+        if name in self.variables: raise Error(f'variable {Word(name)} already defined in this scope')
+        self.variables[name] = value
+    def store(self, name: str, value: Atom) -> None:
+        scope = self.find(name)
+        if scope is None: raise Error(f'variable {Word(name)} not defined')
+        scope.variables[name] = value
+    def find(self, name:str) -> Optional['Scope']:
+        if name in self.variables: return self
+        if self.parent is None: return None
+        return self.parent.find(name)
+    def execute(self, runtime: 'Runtime', name: str) -> bool:
+        scope = self.find(name)
+        if scope is None: return False
+        scope.variables[name].execute(runtime)
+        return True
+    def list(self) -> Iterable[Tuple[str, Atom]]:
+        yield from self.variables.items()
+        if self.parent is not None: yield from self.parent.list()
+    def open(self) -> 'Scope': return Scope(self)
+    def close(self) -> 'Scope': return self.parent
+
 class Runtime:
     '''
     Runtime environement for execution.
@@ -294,6 +352,7 @@ class Runtime:
     def __init__(self) -> None:
         self.words: Dict[str, Atom] = {}
         self.stack: List[Atom] = []
+        self.scope: Scope = Scope()
 
     def check_type(self, atom: Atom, atom_type: Union[None, Type[Atom], Tuple[Type[Atom],...]]) -> None:
         if atom_type is None or isinstance(atom, atom_type): return
@@ -327,6 +386,7 @@ class Runtime:
         self.words[word] = definition
 
     def execute(self, word: str) -> None:
+        if self.scope.execute(self, word): return
         if not word in self.words: raise Error(f'unknown word {Word(word)}')
         for atom in self.words[word].unbox(): atom.execute(self)
 
@@ -346,8 +406,9 @@ class Print(Intrinsic):
 class Help(Intrinsic):
     def __init__(self): super().__init__('.w', 'print patterns and words')
     def execute(self, runtime: Runtime) -> None:
-        for pattern in Pattern.classes:
-            print(f'  {pattern()}   {fg.LIGHTBLACK_EX}pattern<{pattern.__name__}>{fg.RESET}')
+        for pattern in [cls() for cls in Pattern.classes]:
+            print(f'  {pattern} {pattern.describe()}')
+        print()
         for key in sorted(runtime.words.keys()):
             print(f'  : {fg.YELLOW}{key}{fg.RESET} {runtime.describe(key)} ;')
 
@@ -361,15 +422,43 @@ class PrintStack(Intrinsic):
             i -= 1
 
 class Define(Intrinsic):
-    def __init__(self): super().__init__('def', 'a { b } --  , define b as a')
+    def __init__(self): super().__init__('def', 'a `b` --  , define word b with content a')
     def execute(self, runtime: Runtime) -> None:
         quote, definition = runtime.pop_args([Sequence, None])
         word = quote.content[0] if len(quote.content) == 1 else None
         if word is None: 
-            raise Error(f'invalid argument {quote} in definition')
+            raise Error(f'invalid word {quote} in definition')
         if runtime.is_intrinsic(word.value):
             raise Error(f'cannot redefine intrinsic {word}')
         runtime.register(word.value, definition)
+
+class DefineVariable(Intrinsic):
+    def __init__(self): super().__init__('var', 'a `b` } --  , create variable b with value a')
+    def execute(self, runtime: Runtime) -> None:
+        quote, value = runtime.pop_args([Sequence, None])
+        variable = quote.content[0] if len(quote.content) == 1 else None
+        if variable is None: 
+            raise Error(f'invalid variable argument {quote}')
+        if runtime.is_intrinsic(variable.value):
+            raise Error(f'cannot use intrinsic {variable} as variable')
+        runtime.scope.define(variable.value, value)
+
+class Store(Intrinsic):
+    def __init__(self): super().__init__('sto', 'a `b` --  , set variable b to value a')
+    def execute(self, runtime: Runtime) -> None:
+        quote, value = runtime.pop_args([Sequence, None])
+        variable = quote.content[0] if len(quote.content) == 1 else None
+        if variable is None: 
+            raise Error(f'invalid variable argument {quote}')
+        if runtime.is_intrinsic(variable.value):
+            raise Error(f'cannot use intrinsic {variable} as variable')
+        runtime.scope.store(variable.value, value)
+
+class PrintVariables(Intrinsic):
+    def __init__(self): super().__init__('.v', 'print variables')
+    def execute(self, runtime: Runtime) -> None:
+        for name, value in runtime.scope.list():
+            print(f'  {Word(name)} = {value}')
 
 class Add(Intrinsic):
     def __init__(self): super().__init__('+', 'a b -- a+b')
@@ -438,7 +527,11 @@ class Evaluate(Intrinsic):
     def __init__(self): super().__init__('eval', 'a -- eval of a' )
     def execute(self, runtime: Runtime) -> None:
         arg = runtime.pop()
-        for atom in arg.unbox(): atom.execute(runtime)
+        runtime.scope = runtime.scope.open()
+        try:
+            for atom in arg.unbox(): atom.execute(runtime)
+        finally:
+            runtime.scope = runtime.scope.close()
 
 class LoopInterrupt(Exception): pass
 
@@ -501,20 +594,22 @@ class Interpreter:
         self.runtime = Runtime()
         for intrinsic in Intrinsic.classes: intrinsic().register(self.runtime)
         self.parser = Parser()
-        for pattern in Pattern.classes: self.parser.register(pattern())
+        for pattern in Pattern.classes: pattern().register(self.parser)
         for instruction in Interpreter.BOOTSTRAP: self.execute(instruction)
         print(f"Welcome to {fg.LIGHTWHITE_EX}FOLIE{fg.RESET} {Comment('FOrth-Like Interpreter Experiment')}.")
-        print(f'Type {Word("help")} for available patterns and verbs.\n\nExamples:')
-        print(f'  {fg.LIGHTBLACK_EX}:! (a -- a!)  dup 0 > if dup 1 - ! * else drop 1 then;{fg.RESET}')
-        print(f'  {fg.LIGHTBLACK_EX}:! (a -- a!) 1 begin over 0 > while over 1 - -rot * repeat nip;{fg.RESET}')
-        print(f'  {fg.LIGHTBLACK_EX}6 ! .{fg.RESET}')
+        print(f'Type {Word("help")} for available patterns and verbs.\n')
+        print(f'Examples:{fg.LIGHTBLACK_EX} ( alternative factorial implementations )')
+        print('  :! (a -- a!)  dup 0 > if dup 1 - ! * else drop 1 then;                6 ! .')
+        print('  :! (a -- a!) 1 begin over 0 <= ?leave over 1 - -rot * again nip;      6 ! .')
+        print('  :! (a -- a!) -> n { `n n 1 - ! *` 1  n 0 > ?ifelse };                 6 ! .')
+        print('  :! (a -- a!) -> n { 1 begin n 0 > while n * n 1 - `n` sto repeat };   6 ! .' + fg.RESET)
 
     def execute(self, expression: str) -> None:
         self.parser.execute(self.runtime, expression)
 
     BOOTSTRAP = [
-        ':print (alias) .; :stack (alias) .s; :help (alias) .w; :bye (alias) leave;',
-        ':prepend (alias) <+; :append (alias) +>;',
+        ':print (alias) .; :stack (alias) .s; :help (alias) .w; :vars (alias) .v; ',
+        ':prepend (alias) <+; :append (alias) +>; :bye (alias) leave;',
         ':drop (a --) {} +> 0 * eval;',
         ':dup (a -- a a) {} +> 2 * eval;',
         ':swap (a b -- b a) {} +> +> eval;',
@@ -526,8 +621,7 @@ class Interpreter:
         ':neg (a -- -a) 0 swap -;',
         ':not (a -- boolean not of a) 0 1 rot ?ifelse;',
         ':<= (a b -- a<=b) > not; :>= (a b -- a>=b) < not; :<> (a b -- a<>b) = not;',
-        ':!= (alias) <>; : == (alias) =;',
-        ':?ifelse (a b c -- a !, if c | b !, otherwise) {swap} swap ?if swap drop eval;',
+        ':?ifelse (a b c -- a !, if c | b !, otherwise) `swap` swap ?if swap drop eval;',
         ':?leave ( a -- interrupts if a) if leave then;'
     ]
 
