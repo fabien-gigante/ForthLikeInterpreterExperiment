@@ -155,7 +155,7 @@ class Pattern:
     def __init_subclass__(cls) -> None: Pattern.classes.add(cls)
     def __init__(self, prefix: str, suffix: str, comment: Optional[str] = None) -> None:
         self.prefix = prefix ; self.suffix = suffix ; self.comment = comment
-    def parse(self, parser: 'Parser') -> Iterable[Atom]:
+    def parse(self, _parser: 'Parser') -> Iterable[Atom]:
         ... # to overload
     def reserved(self) -> Iterable[str]:
         yield self.prefix
@@ -166,7 +166,7 @@ class Pattern:
         parser.register(self.prefix, self)
     def describe(self) -> str:
         desc = f'{Comment(self.comment)} ' if self.comment is not None else ''
-        desc +=  f'{fg.LIGHTBLACK_EX}pattern<{type(self).__name__}>{fg.RESET}';
+        desc +=  f'{fg.LIGHTBLACK_EX}pattern<{type(self).__name__}>{fg.RESET}'
         return desc
 
 class Parser:
@@ -412,17 +412,17 @@ class Print(Intrinsic):
 class Help(Intrinsic):
     def __init__(self): super().__init__('.w', 'print patterns and words')
     def execute(self, runtime: Runtime) -> None:
-        print(fg.LIGHTBLACK_EX+'PATTERNS'+fg.RESET);
+        print(fg.LIGHTBLACK_EX+'PATTERNS'+fg.RESET)
         for pattern in [cls() for cls in Pattern.classes]:
             print(f'  {pattern} {pattern.describe()}')
-        print(fg.LIGHTBLACK_EX+'WORDS'+fg.RESET);
+        print(fg.LIGHTBLACK_EX+'WORDS'+fg.RESET)
         for key in sorted(runtime.words.keys()):
             print(f'  : {fg.YELLOW}{key}{fg.RESET} {runtime.describe(key)} ;')
 
 class PrintStack(Intrinsic):
     def __init__(self): super().__init__('.s', 'print stack')
     def execute(self, runtime: Runtime) -> None:
-        print(fg.LIGHTBLACK_EX+'STACK'+fg.RESET);
+        print(fg.LIGHTBLACK_EX+'STACK'+fg.RESET)
         i = len(runtime.stack)
         if i > 10: 
             print(f'{fg.LIGHTBLACK_EX}  {i} :{fg.RESET}\r\t\t{runtime.stack[-1]}')
@@ -468,7 +468,7 @@ class Store(Intrinsic):
 class PrintVariables(Intrinsic):
     def __init__(self): super().__init__('.v', 'print variables')
     def execute(self, runtime: Runtime) -> None:
-        print(fg.LIGHTBLACK_EX+'VARIABLES'+fg.RESET);
+        print(fg.LIGHTBLACK_EX+'VARIABLES'+fg.RESET)
         for name, value in runtime.scope.list():
             print(f'  {Word(name)} = {value}')
 
@@ -601,8 +601,8 @@ class Interpreter:
     def __init__(self) -> None:
         os.system('')
         colorama.init(convert = True, strip = False)
-        self.prompt_std = fg.LIGHTWHITE_EX + '> ' + fg.RESET
-        self.prompt_cont = fg.LIGHTWHITE_EX + '>> ' + fg.RESET
+        self.prompt = fg.LIGHTWHITE_EX + '> ' + fg.RESET
+        self.prompt_continued = fg.LIGHTWHITE_EX + '>> ' + fg.RESET
         self.showstack = True
         self.runtime = Runtime()
         for intrinsic in Intrinsic.classes: intrinsic().register(self.runtime)
@@ -647,8 +647,6 @@ class Interpreter:
             except ParsingIncomplete:
                 input_str += '\n'
                 prompt = self.prompt_continued
-                continue
-            except: raise
             else: break
 
     def loop(self) -> None:
