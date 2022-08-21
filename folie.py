@@ -332,11 +332,9 @@ class Scope:
         if name in self.variables: return self
         if self.parent is None: return None
         return self.parent.find(name)
-    def execute(self, runtime: 'Runtime', name: str) -> bool:
+    def resolve(self, name: str) -> Optional[Atom]:
         scope = self.find(name)
-        if scope is None: return False
-        scope.variables[name].execute(runtime)
-        return True
+        return scope.variables[name] if scope is not None else None
     def list(self) -> Iterable[Tuple[str, Atom]]:
         yield from self.variables.items()
         if self.parent is not None: yield from self.parent.list()
@@ -385,14 +383,19 @@ class Runtime:
     def register(self, word: str, definition: Atom) -> None:
         self.words[word] = definition
 
-    def execute(self, word: str) -> None:
-        if self.scope.execute(self, word): return
-        if not word in self.words: raise Error(f'unknown word {Word(word)}')
-        for atom in self.words[word].unbox(): atom.execute(self)
+    def resolve(self, name: str) -> Optional[Atom]:
+        word = self.scope.resolve(name)
+        if word is None and name in self.words: word = self.words[name]
+        if word is None: raise Error(f'unknown word {Word(name)}')
+        return word
 
-    def describe(self, word: str) -> str:
-        if not word in self.words: raise Error(f'unknown word {Word(word)}')
-        return ' '.join(f'{word}' for word in self.words[word].unbox())
+    def execute(self, name: str) -> None:
+        word = self.resolve(name)
+        for atom in word.unbox(): atom.execute(self)
+
+    def describe(self, name: str) -> str:
+        if not name in self.words: raise Error(f'unknown word {Word(name)}')
+        return ' '.join(f'{word}' for word in self.words[name].unbox())
 
 #
 #   All intrinsic implementations
@@ -406,16 +409,17 @@ class Print(Intrinsic):
 class Help(Intrinsic):
     def __init__(self): super().__init__('.w', 'print patterns and words')
     def execute(self, runtime: Runtime) -> None:
+        print(fg.LIGHTBLACK_EX+'PATTERNS'+fg.RESET);
         for pattern in [cls() for cls in Pattern.classes]:
             print(f'  {pattern} {pattern.describe()}')
-        print()
+        print(fg.LIGHTBLACK_EX+'WORDS'+fg.RESET);
         for key in sorted(runtime.words.keys()):
             print(f'  : {fg.YELLOW}{key}{fg.RESET} {runtime.describe(key)} ;')
 
 class PrintStack(Intrinsic):
     def __init__(self): super().__init__('.s', 'print stack')
     def execute(self, runtime: Runtime) -> None:
-        print()
+        print(fg.LIGHTBLACK_EX+'STACK'+fg.RESET);
         i = len(runtime.stack)
         for atom in runtime.stack:
             print(f'{fg.LIGHTBLACK_EX}  {i} :{fg.RESET}\r\t\t{atom}')
@@ -457,6 +461,7 @@ class Store(Intrinsic):
 class PrintVariables(Intrinsic):
     def __init__(self): super().__init__('.v', 'print variables')
     def execute(self, runtime: Runtime) -> None:
+        print(fg.LIGHTBLACK_EX+'VARIABLES'+fg.RESET);
         for name, value in runtime.scope.list():
             print(f'  {Word(name)} = {value}')
 
@@ -527,11 +532,11 @@ class Evaluate(Intrinsic):
     def __init__(self): super().__init__('eval', 'a -- eval of a' )
     def execute(self, runtime: Runtime) -> None:
         arg = runtime.pop()
-        runtime.scope = runtime.scope.open()
+        if isinstance(arg,Sequence): runtime.scope = runtime.scope.open()
         try:
             for atom in arg.unbox(): atom.execute(runtime)
         finally:
-            runtime.scope = runtime.scope.close()
+            if isinstance(arg,Sequence): runtime.scope = runtime.scope.close()
 
 class LoopInterrupt(Exception): pass
 
