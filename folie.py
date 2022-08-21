@@ -348,8 +348,8 @@ class Scope:
         if self.parent is None: raise Error('cannot close global scope')
         return self.parent
 
-T1 = TypeVar('T1', bound = Atom); T2 = TypeVar('T2', bound = Atom)
-TSpec = Union[Type[Atom], Tuple[Type[Atom],...]]
+TAtom1 = TypeVar('TAtom1', bound = Atom); TAtom2 = TypeVar('TAtom2', bound = Atom)
+AtomTypeSpec = Union[Type[Atom], Tuple[Type[Atom],...]]
 
 class Runtime:
     '''
@@ -362,18 +362,18 @@ class Runtime:
         self.stack: List[Atom] = []
         self.scope: Scope = Scope()
 
-    def check_type(self, atom: Atom, atom_type: TSpec) -> None:
+    def check_type(self, atom: Atom, atom_type: AtomTypeSpec) -> None:
         if isinstance(atom, atom_type): return
         if isinstance(atom_type, type):
             raise Error(f'argument {atom} is not a {atom_type.__name__.lower()}')
         raise Error(f'argument {atom} is not one of {" , ".join(t.__name__.lower() for t in atom_type)}')
 
-    def pop(self, atom_type: Type[T1]) -> T1:
+    def pop(self, atom_type: Type[TAtom1]) -> TAtom1:
         if len(self.stack) == 0: raise Error('empty stack')
         self.check_type(self.stack[-1], atom_type)
-        return cast(T1, self.stack.pop())
+        return cast(TAtom1, self.stack.pop())
 
-    def pop_args(self, types: List[TSpec], matching: bool = False) -> Iterable[Atom]:
+    def pop_args(self, types: List[AtomTypeSpec], matching: bool = False) -> Iterable[Atom]:
         n = len(types)
         if len(self.stack) < n: raise Error(f'need {n} arguments')
         for i, t in enumerate(types): self.check_type(self.peek(i), t)
@@ -381,8 +381,8 @@ class Runtime:
             raise Error('arguments types no not match')
         for _ in range(n): yield self.pop(Atom)
 
-    def pop2(self, type1: Type[T1], type2: Type[T2], matching: bool = False) -> Tuple[T1, T2]:
-        return cast(Tuple[T1,T2], tuple(self.pop_args([type1, type2], matching)))
+    def pop2(self, type1: Type[TAtom1], type2: Type[TAtom2], matching: bool = False) -> Tuple[TAtom1, TAtom2]:
+        return cast(Tuple[TAtom1,TAtom2], tuple(self.pop_args([type1, type2], matching)))
 
     def peek(self, i: int = 0) -> Atom : return self.stack[-(i+1)]
 
@@ -493,6 +493,7 @@ class Add(Intrinsic):
             runtime.push(NumberLiteral(arg1.value + arg2.value))
         elif isinstance(arg1, StringLiteral) and isinstance(arg2, StringLiteral):
             runtime.push(StringLiteral(arg1.value + arg2.value))
+        else: raise Error(f'Invalid argument types for {self.value}')
 
 class Substract(Intrinsic):
     def __init__(self): super().__init__('-', 'a b -- a-b')
@@ -679,6 +680,7 @@ class Interpreter:
                 print(Error('execution interupted by user'))
             except LoopInterrupt: 
                 break
+        print('\nSee you soon !\n')
 
 # Main function calling
 if __name__ == '__main__':
