@@ -62,10 +62,12 @@ class Runtime:
         for _ in range(n): yield self.stack.pop()
 
     def pop(self, type1: Type[TAtom1]) -> TAtom1:
-        return cast(TAtom1, next(self.pop_args([type1])))
+        (arg1,) = self.pop_args([type1])
+        return cast(TAtom1, arg1)
 
     def pop2(self, type1: Type[TAtom1], type2: Type[TAtom2], matching: bool = False) -> Tuple[TAtom1, TAtom2]:
-        return cast(Tuple[TAtom1,TAtom2], tuple(self.pop_args([type1, type2], matching)))
+        (arg1, arg2) = self.pop_args([type1, type2], matching)
+        return cast(Tuple[TAtom1,TAtom2],  (arg1, arg2))
 
     def peek(self, i: int = 0) -> Atom : return self.stack[-(i+1)]
 
