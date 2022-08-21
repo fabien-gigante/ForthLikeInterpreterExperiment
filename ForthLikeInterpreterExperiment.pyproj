@@ -23,7 +23,12 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="atoms.py" />
+    <Compile Include="execution.py" />
+    <Compile Include="intrinsics.py" />
+    <Compile Include="parsing.py" />
     <Compile Include="folie.py" />
+    <Compile Include="patterns.py" />
   </ItemGroup>
   <ItemGroup>
     <InterpreterReference Include="Global|PythonCore|3.9" />
