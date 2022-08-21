@@ -11,6 +11,9 @@ class Error(Exception):
     def __init__(self, msg) -> None:
         super().__init__(f'{fg.LIGHTRED_EX}ERROR:{fg.RESET} {msg}')
 
+class ParsingIncomplete(Error):
+    ...
+
 class Atom:
     ''' Abstract. Smallest element of language. '''
     def unbox(self) -> Iterable['Atom']:
@@ -115,7 +118,7 @@ class Tokenizer:
     def parse_string(self, prefix: str, suffix: str) -> Optional[str]:
         if self.input[0] != prefix: return None
         idx = self.input.find(suffix, 1)
-        if idx < 0: raise Error(f'missing closing {suffix}')
+        if idx < 0: raise ParsingIncomplete(f'missing closing {suffix}')
         token = self.input[1:idx] ; self.input = self.input[idx+1:]
         return token
 
@@ -194,7 +197,7 @@ class Parser:
         while True:
             token = self.next()
             if token is None and None in closure: break
-            if token is None: raise Error(f'missing closing {closure}')
+            if token is None: raise ParsingIncomplete(f'missing closing {closure}')
             if isinstance(token, Keyword) and token.value in closure:
                 self.closure = token.value ; break
             if isinstance(token, Keyword) and token.value in ignore:
@@ -243,7 +246,7 @@ class DefinePattern(Pattern):
     def __init__(self) : super().__init__(':', ';', 'defines a new word')
     def parse(self, parser: Parser) -> Iterable[Atom]:
         word = parser.next()
-        if word is None: raise Error('missing word in definition')
+        if word is None: raise ParsingIncomplete('missing word in definition')
         if not isinstance(word, Keyword): raise Error(f'invalid word type {word}')
         parser.check_valid_word(word.value)
         yield Sequence(parser.parse_many((self.suffix,)))
@@ -257,7 +260,7 @@ class VariablePattern(Pattern):
         content = []
         while True:
             var = parser.next()
-            if var is None: raise Error('missing { after ->')
+            if var is None: raise ParsingIncomplete('missing { after ->')
             if not isinstance(var, Keyword): raise Error(f'invalid variable type {var}')
             if var.value == '{': break
             parser.check_valid_word(var.value)
@@ -421,7 +424,11 @@ class PrintStack(Intrinsic):
     def execute(self, runtime: Runtime) -> None:
         print(fg.LIGHTBLACK_EX+'STACK'+fg.RESET);
         i = len(runtime.stack)
-        for atom in runtime.stack:
+        if i > 10: 
+            print(f'{fg.LIGHTBLACK_EX}  {i} :{fg.RESET}\r\t\t{runtime.stack[-1]}')
+            print(f'{fg.LIGHTBLACK_EX}  ...\r\t\t...{fg.RESET}')
+            i = 10 
+        for atom in runtime.stack[-10:]:
             print(f'{fg.LIGHTBLACK_EX}  {i} :{fg.RESET}\r\t\t{atom}')
             i -= 1
 
@@ -594,7 +601,8 @@ class Interpreter:
     def __init__(self) -> None:
         os.system('')
         colorama.init(convert = True, strip = False)
-        self.prompt = fg.LIGHTWHITE_EX + '> ' + fg.RESET
+        self.prompt_std = fg.LIGHTWHITE_EX + '> ' + fg.RESET
+        self.prompt_cont = fg.LIGHTWHITE_EX + '>> ' + fg.RESET
         self.showstack = True
         self.runtime = Runtime()
         for intrinsic in Intrinsic.classes: intrinsic().register(self.runtime)
@@ -634,7 +642,17 @@ class Interpreter:
         while True :
             if self.showstack: self.execute('.s')
             try:
-                self.execute(input(self.prompt))
+                input_str = '' ; prompt = self.prompt_std
+                while True:
+                    input_str += input(prompt)
+                    try:
+                        self.execute(input_str)
+                    except ParsingIncomplete:
+                        input_str += '\n'
+                        prompt = self.prompt_cont
+                        continue
+                    except: raise
+                    else: break
             except Error as error:
                 print(error)
             except KeyboardInterrupt:
