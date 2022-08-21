@@ -1,5 +1,6 @@
-from typing import Dict, List, Iterable, Optional, Tuple, TypeVar, Union, Type, cast
+''' Execution engine '''
 
+from typing import Dict, List, Iterable, Optional, Tuple, TypeVar, Union, Type, cast
 from atoms import Atom, Word, Intrinsic, ExecutionError
 
 class Scope:
@@ -29,7 +30,8 @@ class Scope:
         if self.parent is None: raise ExecutionError('cannot close global scope')
         return self.parent
 
-TAtom1 = TypeVar('TAtom1', bound = Atom); TAtom2 = TypeVar('TAtom2', bound = Atom)
+TAtom1 = TypeVar('TAtom1', bound = Atom)
+TAtom2 = TypeVar('TAtom2', bound = Atom)
 AtomTypeSpec = Union[Type[Atom], Tuple[Type[Atom],...]]
 
 class Runtime:
@@ -92,4 +94,5 @@ class Runtime:
         if not name in self.words: raise ExecutionError(f'unknown word {Word(name)}')
         return ' '.join(f'{word}' for word in self.words[name].unbox())
 
-class LoopInterrupt(Exception): pass
+class LoopInterrupt(Exception):
+    ''' Raise to interrupt a loop. '''

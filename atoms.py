@@ -1,3 +1,5 @@
+''' Base classes from atoms and errors '''
+
 from typing import Set, Iterable, Optional, Union, Type, TYPE_CHECKING
 from colorama import Fore as fg
 if TYPE_CHECKING: from execution import Runtime

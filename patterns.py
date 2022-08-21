@@ -1,3 +1,5 @@
+''' All patterns implementations '''
+
 from typing import Iterable
 from colorama import Fore as fg
 from atoms import Atom, Word, Sequence

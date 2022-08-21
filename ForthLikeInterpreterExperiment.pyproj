@@ -5,7 +5,7 @@
     <ProjectGuid>2d6fd718-c038-496e-b811-f4640b0e789b</ProjectGuid>
     <ProjectHome>
     </ProjectHome>
-    <StartupFile>folie.py</StartupFile>
+    <StartupFile>__main__.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
@@ -27,7 +27,7 @@
     <Compile Include="execution.py" />
     <Compile Include="intrinsics.py" />
     <Compile Include="parsing.py" />
-    <Compile Include="folie.py" />
+    <Compile Include="__main__.py" />
     <Compile Include="patterns.py" />
   </ItemGroup>
   <ItemGroup>

@@ -1,12 +1,9 @@
-from colorama import Fore as fg
+''' All intrinsic implementations '''
 
+from colorama import Fore as fg
 from atoms import ExecutionError, Atom, Sequence, Word, Intrinsic, Literal, NumberLiteral, StringLiteral
 from patterns import Pattern
 from execution import Runtime, LoopInterrupt
-
-#
-#   All intrinsic implementations
-#
 
 class Print(Intrinsic):
     def __init__(self): super().__init__('.','a --  , print a')

@@ -1,3 +1,5 @@
+''' Parsing engine '''
+
 from typing import Dict, Set, Iterable, Optional, Tuple, Union, Type, TYPE_CHECKING
 from colorama import Fore as fg
 from atoms import Error, Atom, Literal, NumberLiteral, StringLiteral, Comment, Word
