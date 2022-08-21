@@ -48,21 +48,21 @@ class Runtime:
     def check_type(self, atom: Atom, atom_type: AtomTypeSpec) -> None:
         if isinstance(atom, atom_type): return
         if isinstance(atom_type, type):
-            raise ExecutionError(f'argument {atom} is not a {atom_type.__name__.lower()}')
-        raise ExecutionError(f'argument {atom} is not one of {" , ".join(t.__name__.lower() for t in atom_type)}')
-
-    def pop(self, atom_type: Type[TAtom1]) -> TAtom1:
-        if len(self.stack) == 0: raise ExecutionError('empty stack')
-        self.check_type(self.stack[-1], atom_type)
-        return cast(TAtom1, self.stack.pop())
+            raise ExecutionError(f'argument {atom} is not a {atom_type.__name__}')
+        raise ExecutionError(f'argument {atom} is not one of {" , ".join(t.__name__ for t in atom_type)}')
 
     def pop_args(self, types: List[AtomTypeSpec], matching: bool = False) -> Iterable[Atom]:
         n = len(types)
-        if len(self.stack) < n: raise ExecutionError(f'need {n} arguments')
+        if len(self.stack) < n:
+           if n > 1: raise ExecutionError(f'{n} arguments needed')
+           raise ExecutionError(f'one argument needed (empty stack)')
         for i, t in enumerate(types): self.check_type(self.peek(i), t)
         if matching and len({ type(arg) for arg in self.stack[-n:] }) != 1:
             raise ExecutionError('arguments types no not match')
-        for _ in range(n): yield self.pop(Atom)
+        for _ in range(n): yield self.stack.pop()
+
+    def pop(self, type1: Type[TAtom1]) -> TAtom1:
+        return cast(TAtom1, next(self.pop_args([type1])))
 
     def pop2(self, type1: Type[TAtom1], type2: Type[TAtom2], matching: bool = False) -> Tuple[TAtom1, TAtom2]:
         return cast(Tuple[TAtom1,TAtom2], tuple(self.pop_args([type1, type2], matching)))
