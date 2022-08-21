@@ -1,25 +1,31 @@
 ''' FOLIE : FOrth-Like Interpreter Experiment '''
 
-from typing import Dict, List, Set, Iterable, Optional, Tuple, TypeVar, Union, Type, cast, overload
+from typing import Dict, List, Set, Iterable, Optional, Tuple, TypeVar, Union, Type, cast
 import os
 import colorama
 from colorama import Fore as fg
 
 
 class Error(Exception):
-    ''' Applicative Error. Rendered in red. '''
+    ''' Abstract. Applicative Error. Rendered in red. '''
     def __init__(self, msg) -> None:
         super().__init__(f'{fg.LIGHTRED_EX}ERROR:{fg.RESET} {msg}')
 
-class ParsingIncomplete(Error):
-    ...
+class ParsingError(Error):
+    ''' Raised by the parser. '''
+
+class ParsingIncomplete(ParsingError):
+    ''' Raised by the parser when end of line is reached prematuretly. '''
+
+class RuntimeError(Error):
+    ''' Raised during execution. '''
 
 class Atom:
     ''' Abstract. Smallest element of language. '''
     def unbox(self) -> Iterable['Atom']:
-        raise Error(f'atom {self} cannot be unboxed')
+        raise RuntimeError(f'atom {self} cannot be unboxed')
     def execute(self, runtime: 'Runtime') -> None:
-        raise Error(f'atom {self} cannot be executed')
+        raise RuntimeError(f'atom {self} cannot be executed')
 
 class Literal(Atom):
     ''' Abstract. Atomic int, float or string literal value. '''
@@ -157,7 +163,7 @@ class Pattern:
     def __init_subclass__(cls) -> None: Pattern.classes.add(cls)
     def __init__(self, prefix: str = '', suffix: str = '', comment: Optional[str] = None) -> None:
         self.prefix = prefix ; self.suffix = suffix ; self.comment = comment
-    def parse(self, _parser: 'Parser') -> Iterable[Atom]:
+    def parse(self, parser: 'Parser') -> Iterable[Atom]:
         ... # to overload
     def reserved(self) -> Iterable[str]:
         yield self.prefix
@@ -212,11 +218,11 @@ class Parser:
 
     def check_valid_word(self, word: str) -> None:
         if any(Tokenizer.is_separator(ch) for ch in word):
-            raise Error(f'word name {word} contains an invalid character')
+            raise ParsingError(f'word name {word} contains an invalid character')
         if word in self.reserved_patterns():
-            raise Error(f'word name {word} is reserved')
+            raise ParsingError(f'word name {word} is reserved')
         if Tokenizer.is_number(word):
-            raise Error(f'word name {word} is a number')
+            raise ParsingError(f'word name {word} is a number')
 
     def parse_token(self, token: Token) -> Iterable[Atom]:
         if not isinstance(token, Keyword):
@@ -249,7 +255,7 @@ class DefinePattern(Pattern):
     def parse(self, parser: Parser) -> Iterable[Atom]:
         word = parser.next()
         if word is None: raise ParsingIncomplete('missing word in definition')
-        if not isinstance(word, Keyword): raise Error(f'invalid word type {word}')
+        if not isinstance(word, Keyword): raise ParsingError(f'invalid word type {word}')
         parser.check_valid_word(word.value)
         yield Sequence(parser.parse_many((self.suffix,)))
         yield Sequence([Word(word.value)])
@@ -263,11 +269,11 @@ class VariablePattern(Pattern):
         while True:
             var = parser.next()
             if var is None: raise ParsingIncomplete('missing { after ->')
-            if not isinstance(var, Keyword): raise Error(f'invalid variable type {var}')
+            if not isinstance(var, Keyword): raise ParsingError(f'invalid variable type {var}')
             if var.value == '{': break
             parser.check_valid_word(var.value)
             content.extend([Sequence([Word(var.value)]), Word('var')])
-        if len(content) == 0: raise Error('missing variables after ->')
+        if len(content) == 0: raise ParsingError('missing variables after ->')
         rest = parser.parse_many(('}',))
         content.extend(rest)
         yield Sequence(content)
@@ -290,7 +296,7 @@ class IfPattern(Pattern):
             yield from (Sequence(then_cont), Word('swap'), Word('?if'))
         else:
             if any(isinstance(atom, Keyword) for atom in else_cont):
-                raise Error('A single else keyword is allowed in an if statement')
+                raise ParsingError('A single else keyword is allowed in an if statement')
             yield from (Sequence(then_cont), Sequence(else_cont), Word('rot'), Word('?ifelse'))
     def reserved(self) -> Iterable[str]:
         yield from super().reserved()
@@ -312,7 +318,7 @@ class BeginPattern(Pattern):
                     content = [ *content[:i], Word('not'), Word('?leave'), *content[i+1:] ]
                     break
         if any(isinstance(atom, Keyword) for atom in content):
-            raise Error('A single until or while keyword is allowed in a begin statement')
+            raise ParsingError('A single until or while keyword is allowed in a begin statement')
         yield Sequence(content)
         yield Word('forever')
     def reserved(self) -> Iterable[str]:
@@ -327,11 +333,11 @@ class Scope:
         self.parent: Optional['Scope'] = parent
         self.variables: Dict[str, Atom] = {}
     def define(self, name: str, value: Atom) -> None:
-        if name in self.variables: raise Error(f'variable {Word(name)} already defined in this scope')
+        if name in self.variables: raise RuntimeError(f'variable {Word(name)} already defined in this scope')
         self.variables[name] = value
     def store(self, name: str, value: Atom) -> None:
         scope = self.find(name)
-        if scope is None: raise Error(f'variable {Word(name)} not defined')
+        if scope is None: raise RuntimeError(f'variable {Word(name)} not defined')
         scope.variables[name] = value
     def find(self, name:str) -> Optional['Scope']:
         if name in self.variables: return self
@@ -345,7 +351,7 @@ class Scope:
         if self.parent is not None: yield from self.parent.list()
     def open(self) -> 'Scope': return Scope(self)
     def close(self) -> 'Scope':
-        if self.parent is None: raise Error('cannot close global scope')
+        if self.parent is None: raise RuntimeError('cannot close global scope')
         return self.parent
 
 TAtom1 = TypeVar('TAtom1', bound = Atom); TAtom2 = TypeVar('TAtom2', bound = Atom)
@@ -365,20 +371,20 @@ class Runtime:
     def check_type(self, atom: Atom, atom_type: AtomTypeSpec) -> None:
         if isinstance(atom, atom_type): return
         if isinstance(atom_type, type):
-            raise Error(f'argument {atom} is not a {atom_type.__name__.lower()}')
-        raise Error(f'argument {atom} is not one of {" , ".join(t.__name__.lower() for t in atom_type)}')
+            raise RuntimeError(f'argument {atom} is not a {atom_type.__name__.lower()}')
+        raise RuntimeError(f'argument {atom} is not one of {" , ".join(t.__name__.lower() for t in atom_type)}')
 
     def pop(self, atom_type: Type[TAtom1]) -> TAtom1:
-        if len(self.stack) == 0: raise Error('empty stack')
+        if len(self.stack) == 0: raise RuntimeError('empty stack')
         self.check_type(self.stack[-1], atom_type)
         return cast(TAtom1, self.stack.pop())
 
     def pop_args(self, types: List[AtomTypeSpec], matching: bool = False) -> Iterable[Atom]:
         n = len(types)
-        if len(self.stack) < n: raise Error(f'need {n} arguments')
+        if len(self.stack) < n: raise RuntimeError(f'need {n} arguments')
         for i, t in enumerate(types): self.check_type(self.peek(i), t)
         if matching and len({ type(arg) for arg in self.stack[-n:] }) != 1:
-            raise Error('arguments types no not match')
+            raise RuntimeError('arguments types no not match')
         for _ in range(n): yield self.pop(Atom)
 
     def pop2(self, type1: Type[TAtom1], type2: Type[TAtom2], matching: bool = False) -> Tuple[TAtom1, TAtom2]:
@@ -400,7 +406,7 @@ class Runtime:
     def resolve(self, name: str) -> Atom:
         word = self.scope.resolve(name)
         if word is None and name in self.words: word = self.words[name]
-        if word is None: raise Error(f'unknown word {Word(name)}')
+        if word is None: raise RuntimeError(f'unknown word {Word(name)}')
         return word
 
     def execute(self, name: str) -> None:
@@ -408,7 +414,7 @@ class Runtime:
         for atom in word.unbox(): atom.execute(self)
 
     def describe(self, name: str) -> str:
-        if not name in self.words: raise Error(f'unknown word {Word(name)}')
+        if not name in self.words: raise RuntimeError(f'unknown word {Word(name)}')
         return ' '.join(f'{word}' for word in self.words[name].unbox())
 
 #
@@ -449,9 +455,9 @@ class Define(Intrinsic):
         quote, definition = runtime.pop2(Sequence, Atom)
         word = quote.content[0] if len(quote.content) == 1 else None
         if not isinstance(word, Word): 
-            raise Error(f'invalid word {quote} in definition')
+            raise RuntimeError(f'invalid word {quote} in definition')
         if runtime.is_intrinsic(word.value):
-            raise Error(f'cannot redefine intrinsic {word}')
+            raise RuntimeError(f'cannot redefine intrinsic {word}')
         runtime.register(word.value, definition)
 
 class DefineVariable(Intrinsic):
@@ -460,9 +466,9 @@ class DefineVariable(Intrinsic):
         quote, value = runtime.pop2(Sequence, Atom)
         variable = quote.content[0] if len(quote.content) == 1 else None
         if not isinstance(variable, Word): 
-            raise Error(f'invalid variable argument {quote}')
+            raise RuntimeError(f'invalid variable argument {quote}')
         if runtime.is_intrinsic(variable.value):
-            raise Error(f'cannot use intrinsic {variable} as variable')
+            raise RuntimeError(f'cannot use intrinsic {variable} as variable')
         runtime.scope.define(variable.value, value)
 
 class Store(Intrinsic):
@@ -471,9 +477,9 @@ class Store(Intrinsic):
         quote, value = runtime.pop2(Sequence, Atom)
         variable = quote.content[0] if len(quote.content) == 1 else None
         if not isinstance(variable, Word): 
-            raise Error(f'invalid variable argument {quote}')
+            raise RuntimeError(f'invalid variable argument {quote}')
         if runtime.is_intrinsic(variable.value):
-            raise Error(f'cannot use intrinsic {variable} as variable')
+            raise RuntimeError(f'cannot use intrinsic {variable} as variable')
         runtime.scope.store(variable.value, value)
 
 class PrintVariables(Intrinsic):
@@ -493,7 +499,7 @@ class Add(Intrinsic):
             runtime.push(NumberLiteral(arg1.value + arg2.value))
         elif isinstance(arg1, StringLiteral) and isinstance(arg2, StringLiteral):
             runtime.push(StringLiteral(arg1.value + arg2.value))
-        else: raise Error(f'Invalid argument types for {self.value}')
+        else: raise RuntimeError(f'Invalid argument types for {self.value}')
 
 class Substract(Intrinsic):
     def __init__(self): super().__init__('-', 'a b -- a-b')
@@ -511,7 +517,7 @@ class Multiply(Intrinsic):
             runtime.push(Sequence(arg1.content * arg2.value))
         elif isinstance(arg2, Sequence) and isinstance(arg1, NumberLiteral) and isinstance(arg1.value, int):
             runtime.push(Sequence(arg1.value * arg2.content))
-        else: raise Error(f'Invalid argument types for {self.value}')
+        else: raise RuntimeError(f'Invalid argument types for {self.value}')
 
 class Divide(Intrinsic):
     def __init__(self): super().__init__('/', 'a b -- a/b')
@@ -533,7 +539,7 @@ class LowerThan(Intrinsic):
             runtime.push(NumberLiteral(1 if arg1.value < arg2.value else 0))
         elif isinstance(arg1, StringLiteral) and isinstance(arg2, StringLiteral):
             runtime.push(NumberLiteral(1 if arg1.value < arg2.value else 0))
-        else: raise Error(f'Invalid argument types for {self.value}')
+        else: raise RuntimeError(f'Invalid argument types for {self.value}')
 
 class GreaterThan(Intrinsic):
     def __init__(self): super().__init__('>', 'a b -- a>b')
@@ -543,7 +549,7 @@ class GreaterThan(Intrinsic):
             runtime.push(NumberLiteral(1 if arg1.value > arg2.value else 0))
         elif isinstance(arg1, StringLiteral) and isinstance(arg2, StringLiteral):
             runtime.push(NumberLiteral(1 if arg1.value > arg2.value else 0))
-        else: raise Error(f'Invalid argument types for {self.value}')
+        else: raise RuntimeError(f'Invalid argument types for {self.value}')
 
 class Clear(Intrinsic):
     def __init__(self): super().__init__('clear', 'a1 .. an --')
@@ -677,7 +683,7 @@ class Interpreter:
             except Error as error:
                 print(error)
             except KeyboardInterrupt:
-                print(Error('execution interupted by user'))
+                print(RuntimeError('execution interupted by user'))
             except LoopInterrupt: 
                 break
         print('\nSee you soon !\n')
