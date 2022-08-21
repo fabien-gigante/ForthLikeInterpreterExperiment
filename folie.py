@@ -17,15 +17,15 @@ class ParsingError(Error):
 class ParsingIncomplete(ParsingError):
     ''' Raised by the parser when end of line is reached prematuretly. '''
 
-class RuntimeError(Error):
+class ExecutionError(Error):
     ''' Raised during execution. '''
 
 class Atom:
     ''' Abstract. Smallest element of language. '''
     def unbox(self) -> Iterable['Atom']:
-        raise RuntimeError(f'atom {self} cannot be unboxed')
+        raise ExecutionError(f'atom {self} cannot be unboxed')
     def execute(self, runtime: 'Runtime') -> None:
-        raise RuntimeError(f'atom {self} cannot be executed')
+        raise ExecutionError(f'atom {self} cannot be executed')
 
 class Literal(Atom):
     ''' Abstract. Atomic int, float or string literal value. '''
@@ -38,6 +38,7 @@ class Literal(Atom):
 class NumberLiteral(Literal):
     ''' Atomic int or float literal value. '''
     def __init__(self, value: Union[int,float]) -> None:
+        super().__init__()
         self.value : Union[int, float] = value
     def __str__(self) -> str:
         return f'{fg.CYAN}{self.value}{fg.RESET}'
@@ -45,6 +46,7 @@ class NumberLiteral(Literal):
 class StringLiteral(Literal):
     ''' Atomic string literal value. '''
     def __init__(self, value: str) -> None:
+        super().__init__()
         self.value : str = value
     def __str__(self) -> str:
         return f"{fg.CYAN}'{self.value}'{fg.RESET}"
@@ -163,7 +165,7 @@ class Pattern:
     def __init_subclass__(cls) -> None: Pattern.classes.add(cls)
     def __init__(self, prefix: str = '', suffix: str = '', comment: Optional[str] = None) -> None:
         self.prefix = prefix ; self.suffix = suffix ; self.comment = comment
-    def parse(self, parser: 'Parser') -> Iterable[Atom]:
+    def parse(self, _parser: 'Parser') -> Iterable[Atom]:
         ... # to overload
     def reserved(self) -> Iterable[str]:
         yield self.prefix
@@ -333,11 +335,11 @@ class Scope:
         self.parent: Optional['Scope'] = parent
         self.variables: Dict[str, Atom] = {}
     def define(self, name: str, value: Atom) -> None:
-        if name in self.variables: raise RuntimeError(f'variable {Word(name)} already defined in this scope')
+        if name in self.variables: raise ExecutionError(f'variable {Word(name)} already defined in this scope')
         self.variables[name] = value
     def store(self, name: str, value: Atom) -> None:
         scope = self.find(name)
-        if scope is None: raise RuntimeError(f'variable {Word(name)} not defined')
+        if scope is None: raise ExecutionError(f'variable {Word(name)} not defined')
         scope.variables[name] = value
     def find(self, name:str) -> Optional['Scope']:
         if name in self.variables: return self
@@ -351,7 +353,7 @@ class Scope:
         if self.parent is not None: yield from self.parent.list()
     def open(self) -> 'Scope': return Scope(self)
     def close(self) -> 'Scope':
-        if self.parent is None: raise RuntimeError('cannot close global scope')
+        if self.parent is None: raise ExecutionError('cannot close global scope')
         return self.parent
 
 TAtom1 = TypeVar('TAtom1', bound = Atom); TAtom2 = TypeVar('TAtom2', bound = Atom)
@@ -371,20 +373,20 @@ class Runtime:
     def check_type(self, atom: Atom, atom_type: AtomTypeSpec) -> None:
         if isinstance(atom, atom_type): return
         if isinstance(atom_type, type):
-            raise RuntimeError(f'argument {atom} is not a {atom_type.__name__.lower()}')
-        raise RuntimeError(f'argument {atom} is not one of {" , ".join(t.__name__.lower() for t in atom_type)}')
+            raise ExecutionError(f'argument {atom} is not a {atom_type.__name__.lower()}')
+        raise ExecutionError(f'argument {atom} is not one of {" , ".join(t.__name__.lower() for t in atom_type)}')
 
     def pop(self, atom_type: Type[TAtom1]) -> TAtom1:
-        if len(self.stack) == 0: raise RuntimeError('empty stack')
+        if len(self.stack) == 0: raise ExecutionError('empty stack')
         self.check_type(self.stack[-1], atom_type)
         return cast(TAtom1, self.stack.pop())
 
     def pop_args(self, types: List[AtomTypeSpec], matching: bool = False) -> Iterable[Atom]:
         n = len(types)
-        if len(self.stack) < n: raise RuntimeError(f'need {n} arguments')
+        if len(self.stack) < n: raise ExecutionError(f'need {n} arguments')
         for i, t in enumerate(types): self.check_type(self.peek(i), t)
         if matching and len({ type(arg) for arg in self.stack[-n:] }) != 1:
-            raise RuntimeError('arguments types no not match')
+            raise ExecutionError('arguments types no not match')
         for _ in range(n): yield self.pop(Atom)
 
     def pop2(self, type1: Type[TAtom1], type2: Type[TAtom2], matching: bool = False) -> Tuple[TAtom1, TAtom2]:
@@ -406,7 +408,7 @@ class Runtime:
     def resolve(self, name: str) -> Atom:
         word = self.scope.resolve(name)
         if word is None and name in self.words: word = self.words[name]
-        if word is None: raise RuntimeError(f'unknown word {Word(name)}')
+        if word is None: raise ExecutionError(f'unknown word {Word(name)}')
         return word
 
     def execute(self, name: str) -> None:
@@ -414,7 +416,7 @@ class Runtime:
         for atom in word.unbox(): atom.execute(self)
 
     def describe(self, name: str) -> str:
-        if not name in self.words: raise RuntimeError(f'unknown word {Word(name)}')
+        if not name in self.words: raise ExecutionError(f'unknown word {Word(name)}')
         return ' '.join(f'{word}' for word in self.words[name].unbox())
 
 #
@@ -455,9 +457,9 @@ class Define(Intrinsic):
         quote, definition = runtime.pop2(Sequence, Atom)
         word = quote.content[0] if len(quote.content) == 1 else None
         if not isinstance(word, Word): 
-            raise RuntimeError(f'invalid word {quote} in definition')
+            raise ExecutionError(f'invalid word {quote} in definition')
         if runtime.is_intrinsic(word.value):
-            raise RuntimeError(f'cannot redefine intrinsic {word}')
+            raise ExecutionError(f'cannot redefine intrinsic {word}')
         runtime.register(word.value, definition)
 
 class DefineVariable(Intrinsic):
@@ -466,9 +468,9 @@ class DefineVariable(Intrinsic):
         quote, value = runtime.pop2(Sequence, Atom)
         variable = quote.content[0] if len(quote.content) == 1 else None
         if not isinstance(variable, Word): 
-            raise RuntimeError(f'invalid variable argument {quote}')
+            raise ExecutionError(f'invalid variable argument {quote}')
         if runtime.is_intrinsic(variable.value):
-            raise RuntimeError(f'cannot use intrinsic {variable} as variable')
+            raise ExecutionError(f'cannot use intrinsic {variable} as variable')
         runtime.scope.define(variable.value, value)
 
 class Store(Intrinsic):
@@ -477,9 +479,9 @@ class Store(Intrinsic):
         quote, value = runtime.pop2(Sequence, Atom)
         variable = quote.content[0] if len(quote.content) == 1 else None
         if not isinstance(variable, Word): 
-            raise RuntimeError(f'invalid variable argument {quote}')
+            raise ExecutionError(f'invalid variable argument {quote}')
         if runtime.is_intrinsic(variable.value):
-            raise RuntimeError(f'cannot use intrinsic {variable} as variable')
+            raise ExecutionError(f'cannot use intrinsic {variable} as variable')
         runtime.scope.store(variable.value, value)
 
 class PrintVariables(Intrinsic):
@@ -499,7 +501,7 @@ class Add(Intrinsic):
             runtime.push(NumberLiteral(arg1.value + arg2.value))
         elif isinstance(arg1, StringLiteral) and isinstance(arg2, StringLiteral):
             runtime.push(StringLiteral(arg1.value + arg2.value))
-        else: raise RuntimeError(f'Invalid argument types for {self.value}')
+        else: raise ExecutionError(f'Invalid argument types for {self.value}')
 
 class Substract(Intrinsic):
     def __init__(self): super().__init__('-', 'a b -- a-b')
@@ -517,7 +519,7 @@ class Multiply(Intrinsic):
             runtime.push(Sequence(arg1.content * arg2.value))
         elif isinstance(arg2, Sequence) and isinstance(arg1, NumberLiteral) and isinstance(arg1.value, int):
             runtime.push(Sequence(arg1.value * arg2.content))
-        else: raise RuntimeError(f'Invalid argument types for {self.value}')
+        else: raise ExecutionError(f'Invalid argument types for {self.value}')
 
 class Divide(Intrinsic):
     def __init__(self): super().__init__('/', 'a b -- a/b')
@@ -539,7 +541,7 @@ class LowerThan(Intrinsic):
             runtime.push(NumberLiteral(1 if arg1.value < arg2.value else 0))
         elif isinstance(arg1, StringLiteral) and isinstance(arg2, StringLiteral):
             runtime.push(NumberLiteral(1 if arg1.value < arg2.value else 0))
-        else: raise RuntimeError(f'Invalid argument types for {self.value}')
+        else: raise ExecutionError(f'Invalid argument types for {self.value}')
 
 class GreaterThan(Intrinsic):
     def __init__(self): super().__init__('>', 'a b -- a>b')
@@ -549,7 +551,7 @@ class GreaterThan(Intrinsic):
             runtime.push(NumberLiteral(1 if arg1.value > arg2.value else 0))
         elif isinstance(arg1, StringLiteral) and isinstance(arg2, StringLiteral):
             runtime.push(NumberLiteral(1 if arg1.value > arg2.value else 0))
-        else: raise RuntimeError(f'Invalid argument types for {self.value}')
+        else: raise ExecutionError(f'Invalid argument types for {self.value}')
 
 class Clear(Intrinsic):
     def __init__(self): super().__init__('clear', 'a1 .. an --')
@@ -680,12 +682,12 @@ class Interpreter:
             if self.showstack: print(); self.execute('.s')
             try:
                 self.execute_input()
+            except LoopInterrupt: 
+                break
             except Error as error:
                 print(error)
             except KeyboardInterrupt:
-                print(RuntimeError('execution interupted by user'))
-            except LoopInterrupt: 
-                break
+                print(ExecutionError('execution interupted by user'))
         print('\nSee you soon !\n')
 
 # Main function calling
