@@ -16,8 +16,8 @@ class Interpreter:
     def __init__(self) -> None:
         os.system('')
         colorama.init(convert = True, strip = False)
-        self.prompt = fg.LIGHTWHITE_EX + '> ' + fg.RESET
-        self.prompt_continued = fg.LIGHTWHITE_EX + '>> ' + fg.RESET
+        self.prompt = fg.LIGHTWHITE_EX + '>> ' + fg.RESET
+        self.prompt_continued = fg.LIGHTWHITE_EX + '.. ' + fg.RESET
         self.showstack = True
         self.runtime = Runtime()
         for intrinsic in Intrinsic.classes: intrinsic().register(self.runtime)
