@@ -1,6 +1,6 @@
 ''' Parsing engine '''
 
-from typing import Dict, Set, Iterable, Optional, Tuple, Union, Type, TYPE_CHECKING
+from typing import Dict, Set, Iterable, Optional, Tuple, Union, Type, List, TYPE_CHECKING
 from colorama import Fore as fg
 from atoms import Error, Atom, Literal, NumberLiteral, StringLiteral, Comment, Word
 if TYPE_CHECKING: from execution import Runtime
@@ -105,31 +105,33 @@ class Parser:
     def __init__(self) -> None:
         self.input : Optional[Iterable[Token]] = None
         self.patterns : Dict[str, Pattern] = {}
-        self.closure: Optional[str] = None
 
     def register(self, prefix: str, pattern: Pattern) -> None:
         self.patterns[prefix] = pattern
 
     def parse(self, input_str: str) -> Iterable[Atom]:
         self.input = Tokenizer(input_str).tokenize()
-        yield from self.parse_many()
+        ((atoms, _),) = self.parse_pattern()
+        return atoms
 
     def next(self) -> Optional[Token]:
         if self.input is None: return None
         return next(iter(self.input), None)
 
-    def parse_many(self, closure: Tuple[Optional[str],...] = (None, ), ignore: Tuple[str,...] = ()) -> Iterable[Atom]:
-        self.closure = None
+    def parse_pattern(self, closure: Tuple[str,...] = (), inner: Tuple[str,...] = ()) -> Iterable[Tuple[List[Atom], Optional[str]]]:
+        current : List[Atom] = []
         while True:
             token = self.next()
-            if token is None and None in closure: break
-            if token is None: raise ParsingIncomplete(f'missing closing {closure}')
+            if token is None and closure == ():
+               yield (current, None) ; break
+            if token is None:
+               raise ParsingIncomplete(f'missing closing {" , ".join(closure)}')
             if isinstance(token, Keyword) and token.value in closure:
-                self.closure = token.value ; break
-            if isinstance(token, Keyword) and token.value in ignore:
-                yield token
+                yield (current, token.value) ; break
+            if isinstance(token, Keyword) and token.value in inner:
+                yield (current, token.value) ; current = []
             else:
-                yield from self.parse_token(token)
+                current.extend( self.parse_token(token) )
 
     def reserved_patterns(self) -> Iterable[str]:
         for p in self.patterns.values(): yield from p.reserved()
