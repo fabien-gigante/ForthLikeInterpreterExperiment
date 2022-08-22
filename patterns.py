@@ -3,7 +3,7 @@
 from typing import Iterable, List
 from colorama import Fore as fg
 from atoms import Atom, Word, Sequence
-from parsing import Pattern, Keyword, Parser, ParsingError, ParsingIncomplete
+from parsing import Pattern, NumberLiteral, Parser, ParsingError, ParsingIncomplete
 
 class SequencePattern(Pattern):
     ''' Pattern { ... }  to define a sequence. '''
@@ -23,14 +23,9 @@ class DefinePattern(Pattern):
     ''' Pattern : ... ;  to define a new word. '''
     def __init__(self) : super().__init__(':', ';', 'defines a new word')
     def parse(self, parser: Parser) -> Iterable[Atom]:
-        word = parser.next()
-        if word is None: raise ParsingIncomplete('missing word in definition')
-        if not isinstance(word, Keyword): raise ParsingError(f'invalid word type {word}')
-        parser.check_valid_word(word.value)
+        word = parser.parse_word()
         ((atoms, _),) = parser.parse_pattern((self.suffix,))
-        yield Sequence(atoms)
-        yield Sequence([Word(word.value)])
-        yield Word('def')
+        yield from [Sequence(atoms), Sequence([word]), Word('def')]
 
 class VariablePattern(Pattern):
     ''' Pattern -> ...  to define new variables. '''
@@ -41,13 +36,13 @@ class VariablePattern(Pattern):
         if len(variables) == 0: raise ParsingError('missing variables after ->')
         for var in variables:
             if not isinstance(var, Word): raise ParsingError(f'invalid variable type {var}')
-            content += [Sequence([var]), Word('var')]
+            content = [Sequence([var]), Word('var')] + content
         ((expression, _),) = parser.parse_pattern(('}',))
         content += expression
         yield Sequence(content)
         yield Word('eval')
     def __str__(self) -> str:
-        return f'{self.prefix}{fg.LIGHTBLACK_EX} .. {fg.RESET}' + ' { ' + f'{fg.LIGHTBLACK_EX} .. {fg.RESET}' + ' }'
+        return self.prefix + Pattern.ELLIPSIS + '{' + Pattern.ELLIPSIS + '}'
 
 class IfPattern(Pattern):
     ''' Pattern if ... else ... then, used to define conditional logic. '''
@@ -68,23 +63,48 @@ class IfPattern(Pattern):
         yield from super().reserved()
         yield 'else'
     def __str__(self) -> str:
-        return f'{self.prefix}{fg.LIGHTBLACK_EX} .. {fg.RESET}[else {fg.LIGHTBLACK_EX}..{fg.RESET}] {self.suffix}'
+        return self.prefix + Pattern.ELLIPSIS + '[else' + Pattern.ELLIPSIS + '] ' + self.suffix
 
 class BeginPattern(Pattern):
-    ''' Pattern begin ... again, for forever loops. '''
+    '''
+    Pattern begin ... again, for forever loops 
+    Patterns begin ... until, begin ... while ... repeat, for conditional loops 
+    '''
     def __init__(self) :
         super().__init__('begin', 'again', 'loop with optional condition')
     def parse(self, parser: Parser) -> Iterable[Atom]:
         content = []
-        for atoms, sep in parser.parse_pattern((self.suffix, 'until', 'repeat'), ('while',)):
+        for atoms, key in parser.parse_pattern((self.suffix, 'until', 'repeat'), ('while',)):
             content += atoms
-            if sep == 'until': content += [ Word('?leave') ]
-            if sep == 'while': content += [ Word('not'), Word('?leave') ]
+            if key == 'until': content += [ Word('?leave') ]
+            if key == 'while': content += [ Word('not'), Word('?leave') ]
         yield Sequence(content)
         yield Word('forever')
     def reserved(self) -> Iterable[str]:
         yield from super().reserved()
         yield 'until' ; yield 'while' ; yield 'repeat'
     def __str__(self) -> str:
-        return super().__str__() + f' | until | while {fg.LIGHTBLACK_EX}..{fg.RESET} repeat'
+        return super().__str__() + ' | until | while' + Pattern.ELLIPSIS + 'repeat'
 
+class ForPattern(Pattern):
+    ''' Pattern for .. next | step, for indexed loops. '''
+    def __init__(self) :
+        super().__init__('for', 'next', 'indexed loop')
+    def parse(self, parser: Parser) -> Iterable[Atom]:
+        index = parser.parse_word()
+        end = Word(index.value + '.end')
+        ((atoms, closure),) = parser.parse_pattern((self.suffix, 'step'))
+        if closure == 'step': (*atoms, increment) = atoms
+        else: increment = NumberLiteral(1)
+        atoms += [ index, end, Word('='), Word('?leave')]
+        atoms += [index, increment, Word('+'), Sequence([index]), Word('sto') ]
+        yield Sequence([Sequence([end]), Word('var'), Sequence([index]), Word('var'), Sequence(atoms), Word('forever')])
+        yield Word('eval')
+
+class Quote(Pattern):
+    ''' Pattern quote .. '''
+    def __init__(self) :
+        super().__init__('quote', None, 'quoting a variable')
+    def parse(self, parser: Parser) -> Iterable[Atom]:
+        yield Sequence([parser.parse_word()])
+        

@@ -85,7 +85,8 @@ class Runtime:
     def resolve(self, name: str) -> Atom:
         word = self.scope.resolve(name)
         if word is None and name in self.words: word = self.words[name]
-        if word is None: raise ExecutionError(f'unknown word {Word(name)}')
+        if word is None: 
+            raise ExecutionError(f'unknown word {Word(name)}')
         return word
 
     def execute(self, name: str) -> None:

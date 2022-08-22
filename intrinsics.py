@@ -66,6 +66,15 @@ class Store(Intrinsic):
             raise ExecutionError(f'cannot use intrinsic {variable} as variable')
         runtime.scope.store(variable.value, value)
 
+class Recall(Intrinsic):
+    def __init__(self): super().__init__('rcl','`a` --  definition of a')
+    def execute(self, runtime: Runtime) -> None:
+        quote = runtime.pop(Sequence)
+        variable = quote.content[0] if len(quote.content) == 1 else None
+        if not isinstance(variable, Word): 
+            raise ExecutionError(f'invalid variable argument {quote}')
+        runtime.push( runtime.resolve(variable.value) )
+
 class PrintVariables(Intrinsic):
     def __init__(self): super().__init__('.v', 'print variables')
     def execute(self, runtime: Runtime) -> None:

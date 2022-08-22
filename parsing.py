@@ -1,6 +1,7 @@
 ''' Parsing engine '''
 
 from typing import Dict, Set, Iterable, Optional, Tuple, Union, Type, List, TYPE_CHECKING
+EllipsisType = type(...)
 from colorama import Fore as fg
 from atoms import Error, Atom, Literal, NumberLiteral, StringLiteral, Comment, Word
 if TYPE_CHECKING: from execution import Runtime
@@ -77,9 +78,10 @@ class Pattern:
     Abstract. A pattern is a known sequence of token / keywords that can be handled by the parser.
     It has the form : prefix ... suffix. Parsing implementation is provided in sub classes.
     '''
+    ELLIPSIS = f'{fg.LIGHTBLACK_EX} .. {fg.RESET}'
     classes : Set[Type['Pattern']] = set()
     def __init_subclass__(cls) -> None: Pattern.classes.add(cls)
-    def __init__(self, prefix: str = '', suffix: str = '', comment: Optional[str] = None) -> None:
+    def __init__(self, prefix: Optional[str] = None, suffix: Optional[str] = None, comment: Optional[str] = None) -> None:
         self.prefix = prefix ; self.suffix = suffix ; self.comment = comment
     def parse(self, _parser: 'Parser') -> Iterable[Atom]:
         ... # to overload
@@ -87,9 +89,9 @@ class Pattern:
         yield self.prefix
         if self.suffix is not None: yield self.suffix
     def __str__(self) -> str:
-        return f'{self.prefix}{fg.LIGHTBLACK_EX} .. {fg.RESET}{self.suffix}'
+        return self.prefix + Pattern.ELLIPSIS + (self.suffix if self.suffix is not None else '')
     def register(self, parser: 'Parser'):
-        parser.register(self.prefix, self)
+        if self.prefix is not None: parser.register(self.prefix, self)
     def describe(self) -> str:
         desc = f'{Comment(self.comment)} ' if self.comment is not None else ''
         desc +=  f'{fg.LIGHTBLACK_EX}pattern<{type(self).__name__}>{fg.RESET}'
@@ -133,6 +135,13 @@ class Parser:
             else:
                 current.extend( self.parse_token(token) )
 
+    def parse_word(self, token: Union[Token, EllipsisType] = ...) -> Word:
+        if token == ...: token = self.next()
+        if token is None: raise ParsingIncomplete('missing word')
+        if not isinstance(token, Keyword): raise ParsingError(f'invalid word type {token}')
+        self.check_valid_word(token.value)
+        return Word(token.value)
+
     def reserved_patterns(self) -> Iterable[str]:
         for p in self.patterns.values(): yield from p.reserved()
 
@@ -150,8 +159,7 @@ class Parser:
         if token.value in self.patterns:
             yield from self.patterns[token.value].parse(self)
         else:
-            self.check_valid_word(token.value)
-            yield Word(token.value)
+            yield self.parse_word(token)
 
     def execute(self, runtime: 'Runtime', input_str: str) -> None:
         atoms = [*self.parse(input_str)]

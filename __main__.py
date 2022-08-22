@@ -24,13 +24,14 @@ class Interpreter:
         self.parser = Parser()
         for pattern in Pattern.classes: pattern().register(self.parser)
         for instruction in Interpreter.BOOTSTRAP: self.execute(instruction)
-        print(f'Welcome to {fg.LIGHTWHITE_EX}FOLIE{fg.RESET} {fg.GREEN}FOrth-Like Interpreter Experiment{fg.RESET}.')
+        print(f'Welcome to {fg.LIGHTWHITE_EX}FOLIE{fg.RESET} {fg.GREEN}( FOrth-Like Interpreter Experiment ){fg.RESET}.')
         print(f'Type {fg.YELLOW}help{fg.RESET} for available patterns and verbs.\n')
-        print(f'Examples:{fg.LIGHTBLACK_EX} ( alternative factorial implementations )')
+        print(f'Examples:{fg.LIGHTBLACK_EX} ( alternative implementations of the fatcorial function )')
         print('  :! (a -- a!)  dup 0 > if dup 1 - ! * else drop 1 then;                6 ! .')
-        print('  :! (a -- a!) 1 begin over 0 <= ?leave over 1 - -rot * again nip;      6 ! .')
+        print('  :! (a -- a!) 1 { over 0 <= ?leave over 1 - -rot * } forever nip;      6 ! .')
         print('  :! (a -- a!) -> n { `n n 1 - ! *` 1  n 0 > ?ifelse };                 6 ! .')
-        print('  :! (a -- a!) -> n { 1 begin n 0 > while n * n 1 - `n` sto repeat };   6 ! .' + fg.RESET)
+        print('  :! (a -- a!) -> n { 1 begin n 0 > while n * n 1 - `n` sto repeat };   6 ! .')
+        print('  :! (a -- a!) 1 1 rot for i i * next;                                  6 ! .' + fg.RESET);
 
     def execute(self, expression: str) -> None:
         self.parser.execute(self.runtime, expression)
